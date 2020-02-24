@@ -1,0 +1,15 @@
+[package]
+name = "katakomb"
+version = "0.1.0"
+authors = ["CodeBunny <slayer111315@gmail.com>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+ggez = "*"
+na = {version = "*", package = "nalgebra"}
+rand = "0.7.3"
+noise = "*"
+ndarray = {version = "*", features = ["rayon"]}
+rayon = "*"
