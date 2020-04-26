@@ -11,15 +11,13 @@ use ggez::{
     GameResult,
 };
 
-use rodio::{Sink, Source};
-
 use na::{Isometry3, Perspective3, Point2, Point3, Rotation3, Vector3};
-
 use ndarray::arr2;
 use ndarray::prelude::*;
 use noise::{NoiseFn, OpenSimplex, Seedable};
 use rand::prelude::*;
 use rayon::prelude::*;
+use rodio::Source;
 
 use std::fs::File;
 use std::io::BufReader;
@@ -28,12 +26,21 @@ use std::{cmp::Ordering, env, path::PathBuf};
 
 mod editor;
 
-const WINDOW_WIDTH: f32 = 1600.0;
-const WINDOW_HEIGHT: f32 = 900.0;
-const CHUNK_SIZE: usize = 32;
-const LIGHT_RANGE: i32 = 12;
-const PLAYER_SIGHT_RANGE: f32 = 12.0;
-const MAX_SOUND_RANGE: f32 = 12.0;
+use crate::{
+    constants::*,
+    generation::world::*,
+    geometry::util::*,
+    rendering::{drawable::Drawable, font::*, light::*, voxel::*},
+    util::*,
+    world::util::*,
+};
+
+pub mod constants;
+pub mod generation;
+pub mod geometry;
+pub mod rendering;
+pub mod util;
+pub mod world;
 
 fn main() {
     let mut cb = ContextBuilder::new("Katakomb", "CodeBunny");
@@ -62,305 +69,6 @@ fn main() {
     }
 }
 
-fn load_font(ctx: &mut Context) -> KataFont {
-    let texture = image::open(r"C:\Users\admin\Documents\katakomb\resources\master8x8.png")
-        .unwrap()
-        .to_rgba();
-
-    KataFont {
-        texture: Image::from_rgba8(
-            ctx,
-            texture.width() as u16,
-            texture.height() as u16,
-            &texture.into_raw(),
-        )
-        .unwrap(),
-        char_width: 8,
-        char_height: 8,
-    }
-}
-
-fn world_pos_to_index(pos: Point3<f32>) -> Point3<usize> {
-    Point3::new(
-        pos.x.floor() as usize,
-        pos.y.floor() as usize,
-        pos.z.floor() as usize,
-    )
-}
-
-fn world_pos_to_int(pos: Point3<f32>) -> Point3<i32> {
-    Point3::new(
-        pos.x.floor() as i32,
-        pos.y.floor() as i32,
-        pos.z.floor() as i32,
-    )
-}
-
-fn is_in_array(array: ArrayView3<Voxel>, pos: Point3<usize>) -> bool {
-    pos.x >= 0
-        && pos.y >= 0
-        && pos.z >= 0
-        && pos.x < array.dim().0
-        && pos.y < array.dim().1
-        && pos.z < array.dim().2
-}
-
-fn calculate_bresenham(p1: Point3<i32>, p2: Point3<i32>) -> Vec<Point3<i32>> {
-    let mut line = Vec::new();
-
-    let mut p = Point3::new(p1.x, p1.y, p1.z);
-
-    let dx = p2.x - p1.x;
-    let dy = p2.y - p1.y;
-    let dz = p2.z - p1.z;
-    let x_inc = if dx < 0 { -1 } else { 1 };
-    let l = dx.abs();
-    let y_inc = if dy < 0 { -1 } else { 1 };
-    let m = dy.abs();
-    let z_inc = if dz < 0 { -1 } else { 1 };
-    let n = dz.abs();
-    let dx2 = l << 1;
-    let dy2 = m << 1;
-    let dz2 = n << 1;
-
-    if l >= m && l >= n {
-        let mut err_1 = dy2 - l;
-        let mut err_2 = dz2 - l;
-        for _i in 0..l {
-            line.push(p.clone());
-            if err_1 > 0 {
-                p.y += y_inc;
-                err_1 -= dx2;
-            }
-            if err_2 > 0 {
-                p.z += z_inc;
-                err_2 -= dx2;
-            }
-            err_1 += dy2;
-            err_2 += dz2;
-            p.x += x_inc;
-        }
-    } else if m >= l && m >= n {
-        let mut err_1 = dx2 - m;
-        let mut err_2 = dz2 - m;
-        for _i in 0..m {
-            line.push(p.clone());
-            if err_1 > 0 {
-                p.x += x_inc;
-                err_1 -= dy2;
-            }
-            if err_2 > 0 {
-                p.z += z_inc;
-                err_2 -= dy2;
-            }
-            err_1 += dx2;
-            err_2 += dz2;
-            p.y += y_inc;
-        }
-    } else {
-        let mut err_1 = dy2 - n;
-        let mut err_2 = dx2 - n;
-        for _i in 0..n {
-            line.push(p.clone());
-            if err_1 > 0 {
-                p.y += y_inc;
-                err_1 -= dz2;
-            }
-            if err_2 > 0 {
-                p.x += x_inc;
-                err_2 -= dz2;
-            }
-            err_1 += dy2;
-            err_2 += dx2;
-            p.z += z_inc;
-        }
-    }
-    line.push(p.clone());
-
-    line
-}
-
-fn calculate_sphere_surface(radius: i32) -> Vec<Point3<f32>> {
-    let mut points = Vec::new();
-
-    let origin = Point3::origin();
-
-    for x in -radius..radius {
-        for y in -radius..radius {
-            for z in -radius..radius {
-                let point = Point3::new(x as f32, y as f32, z as f32);
-
-                //DISGOSDANG
-                if euclidean_distance_squared(origin, point).sqrt().floor() as i32 == radius {
-                    points.push(point);
-                }
-            }
-        }
-    }
-
-    points
-}
-
-fn calculate_sphere(radius: i32) -> Vec<Point3<f32>> {
-    let mut points = Vec::new();
-
-    let origin = Point3::origin();
-
-    for x in -radius..radius {
-        for y in -radius..radius {
-            for z in -radius..radius {
-                let point = Point3::new(x as f32, y as f32, z as f32);
-
-                //DISGOSDANG
-                if euclidean_distance_squared(origin, point).sqrt().floor() as i32 <= radius {
-                    points.push(point);
-                }
-            }
-        }
-    }
-
-    points
-}
-
-fn any_neighbour_empty(array: &ArrayView3<Voxel>, pos: Point3<i32>) -> bool {
-    for x in -1..2 {
-        for y in -1..2 {
-            for z in -1..2 {
-                let x_index = (pos.x + x) as usize;
-                let y_index = (pos.y + y) as usize;
-                let z_index = (pos.z + z) as usize;
-
-                if x_index >= array.dim().0
-                    || y_index >= array.dim().1
-                    || z_index >= array.dim().2
-                    || array[[x_index, y_index, z_index]]
-                        .voxel_type
-                        .is_transparent()
-                {
-                    return true;
-                }
-            }
-        }
-    }
-
-    false
-}
-
-pub trait Drawable {
-    fn get_char_offset(&self, font: &KataFont) -> Rect;
-    fn get_color(&self) -> Color;
-    fn is_transparent(&self) -> bool;
-    fn illuminates(&self) -> bool;
-    fn rotation(&self) -> f32;
-}
-
-pub struct Light {
-    pos: Point3<f32>,
-    facing: Point3<f32>,
-    illumination: f32,
-    range: f32,
-}
-
-#[derive(Debug, PartialEq, Clone)]
-enum VoxelType {
-    Air,
-    Rock,
-    Mushroom,
-    Candle,
-    FrontSight,
-    RearSight,
-    Barrel,
-    BarrelEnd,
-    GasBlock,
-    RecUpper,
-    RecLower,
-    RecLowerHalf,
-    RecLowerBack,
-    Magazine,
-    Stock,
-    StockUpper,
-    Grip,
-}
-
-impl Drawable for VoxelType {
-    fn get_char_offset(&self, font: &KataFont) -> Rect {
-        match self {
-            VoxelType::Air => get_font_offset(0, font),
-            VoxelType::Rock => get_font_offset(0xB1, font),
-            VoxelType::Mushroom => get_font_offset(0x2E1, font),
-            VoxelType::Candle => get_font_offset(0x21A, font),
-            VoxelType::FrontSight => get_font_offset(0x211, font),
-            VoxelType::RearSight => get_font_offset(0x203, font),
-            VoxelType::GasBlock => get_font_offset(0x7C, font),
-            VoxelType::Barrel => get_font_offset(0x3A, font),
-            VoxelType::BarrelEnd => get_font_offset(0x2E9, font),
-            VoxelType::RecUpper => get_font_offset(0x2DD, font),
-            VoxelType::RecLower => get_font_offset(0x319, font),
-            VoxelType::RecLowerHalf => get_font_offset(0xDF, font),
-            VoxelType::RecLowerBack => get_font_offset(0x2C5, font),
-            VoxelType::Magazine => get_font_offset(0x1AB, font),
-            VoxelType::Stock => get_font_offset(0x319, font),
-            VoxelType::StockUpper => get_font_offset(0x2DD, font),
-            VoxelType::Grip => get_font_offset(0x283, font),
-        }
-    }
-    fn get_color(&self) -> Color {
-        match self {
-            VoxelType::Air => Color::new(0.0, 0.0, 0.0, 0.0),
-            VoxelType::Rock => Color::new(0.5, 0.5, 0.5, 1.0),
-            VoxelType::Mushroom => Color::new(0.75, 0.0, 0.75, 1.0),
-            VoxelType::Candle => Color::new(0.9, 0.9, 0.0, 1.0),
-            VoxelType::StockUpper => Color::new(0.75, 0.5, 0.25, 1.0),
-            VoxelType::Stock => Color::new(0.75, 0.5, 0.25, 1.0),
-            _ => Color::new(0.25, 0.25, 0.25, 1.0),
-        }
-    }
-    fn is_transparent(&self) -> bool {
-        match self {
-            VoxelType::Air => true,
-            VoxelType::Rock => false,
-            VoxelType::Mushroom => true,
-            VoxelType::Candle => true,
-            VoxelType::FrontSight => true,
-            VoxelType::RearSight => true,
-            VoxelType::BarrelEnd => true,
-            VoxelType::Barrel => true,
-            VoxelType::GasBlock => true,
-            VoxelType::RecUpper => true,
-            VoxelType::RecLower => true,
-            VoxelType::RecLowerHalf => true,
-            VoxelType::RecLowerBack => true,
-            VoxelType::Magazine => true,
-            VoxelType::Stock => true,
-            VoxelType::StockUpper => true,
-            VoxelType::Grip => true,
-        }
-    }
-    fn illuminates(&self) -> bool {
-        match self {
-            VoxelType::Mushroom => true,
-            VoxelType::Candle => true,
-            _ => false,
-        }
-    }
-    fn rotation(&self) -> f32 {
-        match self {
-            VoxelType::RecLower => 3.14 / 2.0,
-            VoxelType::Stock => 3.14 / 2.0,
-            VoxelType::RearSight => 3.0 * (3.14 / 2.0),
-            // VoxelType::Grip => 2.0 * (3.14 / 2.0),
-            _ => 0.0,
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-struct Voxel {
-    pos: Point3<f32>,
-    illumination: f32,
-    voxel_type: VoxelType,
-}
-
 struct MyGame {
     blank_texture: Image,
     lighting_sphere: Vec<Point3<f32>>,
@@ -385,60 +93,6 @@ struct MyGame {
     // sound_queue: Vec<(f64, Source)>,
 }
 
-fn gen_voxel(noise: OpenSimplex, meta_noise: OpenSimplex, x: usize, y: usize, z: usize) -> Voxel {
-    let noise_value = noise
-        .get([x as f64 * 0.1, y as f64 * 0.025, z as f64 * 0.1])
-        .abs()
-        .powf(2.0)
-        .max(
-            meta_noise
-                .get([x as f64 * 0.05, y as f64 * 0.005, z as f64 * 0.05])
-                .abs(),
-        );
-
-    let cave_threshold =
-        ((y as f64 - (CHUNK_SIZE / 2) as f64).abs() / (CHUNK_SIZE / 2) as f64).max(0.0) + 0.05;
-
-    Voxel {
-        pos: Point3::new(x as f32, y as f32, z as f32),
-        illumination: 0.5,
-        voxel_type: if noise_value > cave_threshold {
-            VoxelType::Air
-        } else {
-            VoxelType::Rock
-        },
-    }
-}
-
-fn generate_map(noise: OpenSimplex, meta_noise: OpenSimplex) -> Array3<Voxel> {
-    let mut map = Array3::from_shape_fn((CHUNK_SIZE, CHUNK_SIZE, CHUNK_SIZE), |(x, y, z)| {
-        gen_voxel(noise, meta_noise, x, y, z)
-    });
-
-    for x in 0..map.dim().0 {
-        for y in 0..map.dim().1 {
-            for z in 0..map.dim().2 {
-                let pos = Point3::new(x, y, z);
-                let pos_under = Point3::new(x, y - 1, z);
-                if thread_rng().gen_range(0, 500) == 0
-                    && is_in_array(map.view(), pos)
-                    && is_in_array(map.view(), pos_under)
-                    && map[[x, y, z]].voxel_type == VoxelType::Air
-                    && map[[x, y - 1, z]].voxel_type == VoxelType::Rock
-                {
-                    map[[x, y, z]] = Voxel {
-                        pos: Point3::new(x as f32, y as f32, z as f32),
-                        illumination: 0.5,
-                        voxel_type: VoxelType::Candle,
-                    }
-                }
-            }
-        }
-    }
-
-    map
-}
-
 impl MyGame {
     pub fn new(ctx: &mut Context) -> MyGame {
         // Load/create resources such as images here.
@@ -447,13 +101,13 @@ impl MyGame {
 
         set_default_filter(ctx, FilterMode::Nearest);
 
-        use VoxelType::*;
+        use crate::rendering::voxel::VoxelType::*;
 
         MyGame {
             blank_texture: Image::solid(ctx, 1, WHITE).unwrap(),
             lighting_sphere: calculate_sphere_surface(LIGHT_RANGE),
             font: load_font(ctx),
-            voxel_array: generate_map(noise, meta_noise),
+            voxel_array: generate_chunk(Point3::new(0, 0, 0), noise, meta_noise),
             draw_voxels: Vec::new(),
             camera_pos: Point3::new(
                 (CHUNK_SIZE / 2) as f32,
@@ -484,40 +138,6 @@ impl MyGame {
             // sound_queue: Vec::new(),
         }
     }
-}
-
-fn euclidean_distance_squared(a: Point3<f32>, b: Point3<f32>) -> f32 {
-    let x_diff = a.x - b.x;
-    let y_diff = a.y - b.y;
-    let z_diff = a.z - b.z;
-
-    (x_diff * x_diff + y_diff * y_diff + z_diff * z_diff)
-}
-
-pub struct KataFont {
-    texture: Image,
-    char_width: u8,
-    char_height: u8,
-}
-
-fn get_font_offset(index: u16, font: &KataFont) -> Rect {
-    let font_width = font.texture.width();
-    let font_height = font.texture.height();
-    let float_char_width = font.char_width as f32 / font_width as f32;
-    let float_char_height = font.char_height as f32 / font_height as f32;
-
-    let chars_width = 16;
-    // let chars_height = 64;
-
-    let x_index = index % chars_width;
-    let y_index = index / chars_width;
-
-    Rect::new(
-        x_index as f32 * float_char_width,
-        y_index as f32 * float_char_height,
-        float_char_width,
-        float_char_height,
-    )
 }
 
 //Tries to fire a bresenham hitscan, returns dest if no collisions
