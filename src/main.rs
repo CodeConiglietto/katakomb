@@ -6,25 +6,27 @@ use ggez::{
     graphics::{spritebatch::SpriteBatch, DrawParam, Image, *},
     input::{keyboard, mouse},
     timer,
-    Context, ContextBuilder, GameResult,
+    Context,
+    ContextBuilder,
+    GameResult,
 };
 
-use rodio::{
-    Source,
-    Sink,
-};
+use rodio::{Sink, Source};
 
-use na::*;
-use ndarray::prelude::*;
+use na::{Isometry3, Perspective3, Point2, Point3, Rotation3, Vector3};
+
 use ndarray::arr2;
+use ndarray::prelude::*;
 use noise::{NoiseFn, OpenSimplex, Seedable};
 use rand::prelude::*;
 use rayon::prelude::*;
 
-use std::{cmp::Ordering, env, path::PathBuf};
-use std::time::Duration;
 use std::fs::File;
 use std::io::BufReader;
+use std::time::Duration;
+use std::{cmp::Ordering, env, path::PathBuf};
+
+mod editor;
 
 const WINDOW_WIDTH: f32 = 1600.0;
 const WINDOW_HEIGHT: f32 = 900.0;
@@ -380,17 +382,22 @@ struct MyGame {
     player_ads: f32,
     player_gun_recoil: f32,
     player_gun_rotation: Point2<f32>,
-
     // sound_queue: Vec<(f64, Source)>,
 }
 
 fn gen_voxel(noise: OpenSimplex, meta_noise: OpenSimplex, x: usize, y: usize, z: usize) -> Voxel {
     let noise_value = noise
         .get([x as f64 * 0.1, y as f64 * 0.025, z as f64 * 0.1])
-        .abs().powf(2.0).max(meta_noise.get([x as f64 * 0.05, y as f64 * 0.005, z as f64 * 0.05]).abs());
+        .abs()
+        .powf(2.0)
+        .max(
+            meta_noise
+                .get([x as f64 * 0.05, y as f64 * 0.005, z as f64 * 0.05])
+                .abs(),
+        );
 
-    let cave_threshold = ((y as f64 - (CHUNK_SIZE / 2) as f64).abs() / (CHUNK_SIZE / 2) as f64)
-        .max(0.0) + 0.05;
+    let cave_threshold =
+        ((y as f64 - (CHUNK_SIZE / 2) as f64).abs() / (CHUNK_SIZE / 2) as f64).max(0.0) + 0.05;
 
     Voxel {
         pos: Point3::new(x as f32, y as f32, z as f32),
@@ -403,22 +410,21 @@ fn gen_voxel(noise: OpenSimplex, meta_noise: OpenSimplex, x: usize, y: usize, z:
     }
 }
 
-fn generate_map(noise: OpenSimplex, meta_noise: OpenSimplex) -> Array3<Voxel>{
-    let mut map = Array3::from_shape_fn(
-        (CHUNK_SIZE, CHUNK_SIZE, CHUNK_SIZE),
-        |(x, y, z)| gen_voxel(noise, meta_noise, x, y, z),
-    );
+fn generate_map(noise: OpenSimplex, meta_noise: OpenSimplex) -> Array3<Voxel> {
+    let mut map = Array3::from_shape_fn((CHUNK_SIZE, CHUNK_SIZE, CHUNK_SIZE), |(x, y, z)| {
+        gen_voxel(noise, meta_noise, x, y, z)
+    });
 
-    for x in 0..map.dim().0{
-        for y in 0..map.dim().1{
-            for z in 0..map.dim().2{
+    for x in 0..map.dim().0 {
+        for y in 0..map.dim().1 {
+            for z in 0..map.dim().2 {
                 let pos = Point3::new(x, y, z);
                 let pos_under = Point3::new(x, y - 1, z);
-                if  thread_rng().gen_range(0, 500) == 0 &&
-                    is_in_array(map.view(), pos) && 
-                    is_in_array(map.view(), pos_under) && 
-                    map[[x, y, z]].voxel_type == VoxelType::Air &&
-                    map[[x, y - 1, z]].voxel_type == VoxelType::Rock
+                if thread_rng().gen_range(0, 500) == 0
+                    && is_in_array(map.view(), pos)
+                    && is_in_array(map.view(), pos_under)
+                    && map[[x, y, z]].voxel_type == VoxelType::Air
+                    && map[[x, y - 1, z]].voxel_type == VoxelType::Rock
                 {
                     map[[x, y, z]] = Voxel {
                         pos: Point3::new(x as f32, y as f32, z as f32),
@@ -449,16 +455,29 @@ impl MyGame {
             font: load_font(ctx),
             voxel_array: generate_map(noise, meta_noise),
             draw_voxels: Vec::new(),
-            camera_pos: Point3::new((CHUNK_SIZE / 2) as f32, (CHUNK_SIZE / 2) as f32, (CHUNK_SIZE / 2) as f32),
+            camera_pos: Point3::new(
+                (CHUNK_SIZE / 2) as f32,
+                (CHUNK_SIZE / 2) as f32,
+                (CHUNK_SIZE / 2) as f32,
+            ),
             camera_rotation: Point2::origin(),
             nuke_lighting: false,
             current_tic: 0,
             light_noise: OpenSimplex::new(),
             player_gun_recoil: 0.0,
             player_gun_rotation: Point2::origin(),
-            player_gun_model: arr2(&[[Air,Air,FrontSight,Air,Air,Air,Air,RearSight,Air,Air,Air],
-                                [BarrelEnd,BarrelEnd,GasBlock,Barrel,Barrel,RecLower,RecLower,RecLower,Air,StockUpper,StockUpper],
-                                [Air,Air,Air,Air,Air,Air,Magazine,Grip,Stock,Stock,Stock]]),
+            player_gun_model: arr2(&[
+                [
+                    Air, Air, FrontSight, Air, Air, Air, Air, RearSight, Air, Air, Air,
+                ],
+                [
+                    BarrelEnd, BarrelEnd, GasBlock, Barrel, Barrel, RecLower, RecLower, RecLower,
+                    Air, StockUpper, StockUpper,
+                ],
+                [
+                    Air, Air, Air, Air, Air, Air, Magazine, Grip, Stock, Stock, Stock,
+                ],
+            ]),
             player_gun_timer: 0,
             // player_gun_sound: SoundData::new(ctx, r"/gunshot.wav").unwrap(),
             player_ads: 0.0,
@@ -639,19 +658,25 @@ impl EventHandler for MyGame {
         let movement_rotation =
             Rotation3::from_axis_angle(&Vector3::y_axis(), self.camera_rotation.x);
 
-        let gun_rotation = Rotation3::from_euler_angles(-self.player_gun_rotation.y, self.player_gun_rotation.x, 0.0);
+        let gun_rotation = Rotation3::from_euler_angles(
+            -self.player_gun_rotation.y,
+            self.player_gun_rotation.x,
+            0.0,
+        );
 
         let view_rotation =
             Rotation3::from_euler_angles(self.camera_rotation.y, self.camera_rotation.x, 0.0);
 
-        let gun_facing = view_rotation.transform_point(&gun_rotation.transform_point(&Point3::new(0.0, 0.0, 1.0)));
+        let gun_facing = view_rotation
+            .transform_point(&gun_rotation.transform_point(&Point3::new(0.0, 0.0, 1.0)));
 
-        if self.player_gun_timer == 0
-        {
-            if mouse::button_pressed(ctx, mouse::MouseButton::Left)
-            {
+        if self.player_gun_timer == 0 {
+            if mouse::button_pressed(ctx, mouse::MouseButton::Left) {
                 self.player_gun_recoil = (self.player_gun_recoil + 0.2).min(1.0);
-                self.player_gun_rotation.x = (self.player_gun_rotation.x + (thread_rng().gen::<f32>() - 0.5) * 0.05).min(1.0).max(-1.0);
+                self.player_gun_rotation.x = (self.player_gun_rotation.x
+                    + (thread_rng().gen::<f32>() - 0.5) * 0.05)
+                    .min(1.0)
+                    .max(-1.0);
                 self.player_gun_rotation.y = (self.player_gun_rotation.y + 0.05).min(1.0);
 
                 // dbg!(std::env::current_dir().unwrap().to_str().unwrap());
@@ -662,18 +687,23 @@ impl EventHandler for MyGame {
 
                 let mut echo_distances = Vec::new();
 
-                for cube_point in get_cube_points(Point3::new(-0.5, -0.5, -0.5))
-                {
+                for cube_point in get_cube_points(Point3::new(-0.5, -0.5, -0.5)) {
                     let ray_target = self.camera_pos + (cube_point.coords * MAX_SOUND_RANGE * 2.0);
 
-                    if is_in_array(self.voxel_array.view(), world_pos_to_index(ray_target))
-                    {
-                        let ray_hit = try_bresenham_hitscan(self.voxel_array.view(), world_pos_to_int(self.camera_pos), world_pos_to_int(ray_target));
+                    if is_in_array(self.voxel_array.view(), world_pos_to_index(ray_target)) {
+                        let ray_hit = try_bresenham_hitscan(
+                            self.voxel_array.view(),
+                            world_pos_to_int(self.camera_pos),
+                            world_pos_to_int(ray_target),
+                        );
 
-                        if ray_hit != world_pos_to_int(ray_target)
-                        {
+                        if ray_hit != world_pos_to_int(ray_target) {
                             // //TODO mess with this
-                            let hit_distance = euclidean_distance_squared(self.camera_pos, Point3::new(ray_hit.x as f32, ray_hit.y as f32, ray_hit.z as f32)).sqrt();
+                            let hit_distance = euclidean_distance_squared(
+                                self.camera_pos,
+                                Point3::new(ray_hit.x as f32, ray_hit.y as f32, ray_hit.z as f32),
+                            )
+                            .sqrt();
                             let hit_distance_ratio = hit_distance / (MAX_SOUND_RANGE * 2.0);
                             let hit_distance_ratio_squared = hit_distance * hit_distance;
                             echo_distances.push(hit_distance_ratio);
@@ -691,19 +721,31 @@ impl EventHandler for MyGame {
                 let min_echo_distance = echo_distances.first().unwrap();
                 let max_echo_distance = echo_distances.last().unwrap();
 
-                rodio::play_raw(&device, source.buffered().reverb(Duration::from_millis((min_echo_distance * 1000.0) as u64), 0.5 - min_echo_distance * 0.5).reverb(Duration::from_millis((max_echo_distance * 1000.0) as u64), 0.5 - max_echo_distance * 0.5).convert_samples());
+                rodio::play_raw(
+                    &device,
+                    source
+                        .buffered()
+                        .reverb(
+                            Duration::from_millis((min_echo_distance * 1000.0) as u64),
+                            0.5 - min_echo_distance * 0.5,
+                        )
+                        .reverb(
+                            Duration::from_millis((max_echo_distance * 1000.0) as u64),
+                            0.5 - max_echo_distance * 0.5,
+                        )
+                        .convert_samples(),
+                );
 
                 muzzle_flash = true;
                 self.player_gun_timer = 4;
             }
-        }else{
+        } else {
             self.player_gun_timer -= 1;
         }
 
-        if mouse::button_pressed(ctx, mouse::MouseButton::Right)
-        {
-            self.player_ads *= 0.9;//(self.player_ads - 0.1).max(0.0);
-        }else{
+        if mouse::button_pressed(ctx, mouse::MouseButton::Right) {
+            self.player_ads *= 0.9; //(self.player_ads - 0.1).max(0.0);
+        } else {
             self.player_ads = (self.player_ads + 0.1).min(1.0);
         }
 
@@ -847,8 +889,7 @@ impl EventHandler for MyGame {
             })
             .collect();
 
-        if is_in_array(self.voxel_array.view(), world_pos_to_index(camera_pos))
-        {
+        if is_in_array(self.voxel_array.view(), world_pos_to_index(camera_pos)) {
             let player_light = Light {
                 pos: camera_pos,
                 facing: gun_facing,
@@ -859,8 +900,7 @@ impl EventHandler for MyGame {
             lights.push(player_light);
             // dbg!(&lights);
 
-            if muzzle_flash
-            {
+            if muzzle_flash {
                 let muzzle_light = Light {
                     pos: camera_pos,
                     facing: gun_facing,
@@ -869,15 +909,25 @@ impl EventHandler for MyGame {
                 };
 
                 lights.push(muzzle_light);
-            }  
-        } 
+            }
+        }
 
         for light in lights {
-            self.voxel_array[[light.pos.x.floor() as usize, light.pos.y.floor() as usize, light.pos.z.floor() as usize]].illumination = 0.9;
+            self.voxel_array[[
+                light.pos.x.floor() as usize,
+                light.pos.y.floor() as usize,
+                light.pos.z.floor() as usize,
+            ]]
+            .illumination = 0.9;
 
             let light_target: Point3<f32> = Point3::origin() + (light.facing * light.range).coords;
 
-            let light_deviance = self.light_noise.get([light.pos.x as f64, light.pos.y as f64, light.pos.z as f64, self.current_tic as f64 * 0.5]);
+            let light_deviance = self.light_noise.get([
+                light.pos.x as f64,
+                light.pos.y as f64,
+                light.pos.z as f64,
+                self.current_tic as f64 * 0.5,
+            ]);
 
             for target_point in &self.lighting_sphere {
                 let target_point_offset = Point3::new(
@@ -899,17 +949,19 @@ impl EventHandler for MyGame {
                             &mut self.voxel_array[[hit_index.x, hit_index.y, hit_index.z]];
 
                         ray_voxel.illumination = (ray_voxel.illumination
-                            + (light.illumination / 
-                                euclidean_distance_squared
-                                (
+                            + (light.illumination
+                                / euclidean_distance_squared(
                                     ray_voxel.pos,
                                     Point3::new(
                                         light.pos.x as f32,
                                         light.pos.y as f32,
                                         light.pos.z as f32,
                                     ),
-                                ).max(1.0)).powf(1.1) * (light_deviance * 0.5 + 0.5) as f32)
-                        .min(1.0);
+                                )
+                                .max(1.0))
+                            .powf(1.1)
+                                * (light_deviance * 0.5 + 0.5) as f32)
+                            .min(1.0);
                     }
                 }
             }
@@ -963,7 +1015,8 @@ impl EventHandler for MyGame {
             {
                 if screen_pos.z >= -1.0 && screen_pos.z <= 1.0 {
                     let color = voxel.voxel_type.get_color();
-                    let color_darkness = (1.0 - screen_pos.z.min(1.0).max(0.0)) * 0.25 + voxel.illumination * 0.75;
+                    let color_darkness =
+                        (1.0 - screen_pos.z.min(1.0).max(0.0)) * 0.25 + voxel.illumination * 0.75;
                     let color_back_darkness = color_darkness * 0.75;
 
                     let screen_dest = [
@@ -1010,35 +1063,34 @@ impl EventHandler for MyGame {
 
         let player_gun_scale = 0.75;
 
-        for x in 0..self.player_gun_model.dim().1
-        {
-            for y in 0..self.player_gun_model.dim().0
-            {
+        for x in 0..self.player_gun_model.dim().1 {
+            for y in 0..self.player_gun_model.dim().0 {
                 let camera_pos = self.camera_pos;
 
                 //|
                 //V
-                let gun_rotation = Rotation3::from_euler_angles(self.player_gun_rotation.y, self.player_gun_rotation.x, 0.0);
+                let gun_rotation = Rotation3::from_euler_angles(
+                    self.player_gun_rotation.y,
+                    self.player_gun_rotation.x,
+                    0.0,
+                );
 
-                let mut voxel_offset = 
-                    rotation.transform_point(
-                        &gun_rotation.transform_point(
-                            &Point3::new(
-                                -self.player_ads, 
-                                y as f32 * player_gun_scale, 
-                                (self.player_gun_model.dim().1 - x) as f32 * player_gun_scale * 0.75 + (0.5 - self.player_gun_recoil))));
+                let mut voxel_offset =
+                    rotation.transform_point(&gun_rotation.transform_point(&Point3::new(
+                        -self.player_ads,
+                        y as f32 * player_gun_scale,
+                        (self.player_gun_model.dim().1 - x) as f32 * player_gun_scale * 0.75
+                            + (0.5 - self.player_gun_recoil),
+                    )));
 
                 //No idea why this is necessary
                 voxel_offset.x -= 1.0;
 
                 //this may explode
-                if let Some(screen_pos) = 
-                    Point3::from_homogeneous(
-                        model_view_projection * 
-                        (camera_pos + voxel_offset.coords).to_homogeneous())
-                {
+                if let Some(screen_pos) = Point3::from_homogeneous(
+                    model_view_projection * (camera_pos + voxel_offset.coords).to_homogeneous(),
+                ) {
                     if screen_pos.z >= -1.0 && screen_pos.z <= 1.0 {
-
                         let voxel_type = &self.player_gun_model[[y, x]];
                         let color = voxel_type.get_color();
                         let color_darkness = (1.0 - screen_pos.z.min(1.0).max(0.0)).powf(1.1);
@@ -1051,7 +1103,11 @@ impl EventHandler for MyGame {
                         weapon_sprite_batch.add(DrawParam {
                             src: voxel_type.get_char_offset(&self.font),
                             dest: screen_dest.into(),
-                            scale: [(1.0 - screen_pos.z) * 31.4 * player_gun_scale, (1.0 - screen_pos.z) * 31.4 * player_gun_scale].into(),
+                            scale: [
+                                (1.0 - screen_pos.z) * 31.4 * player_gun_scale,
+                                (1.0 - screen_pos.z) * 31.4 * player_gun_scale,
+                            ]
+                            .into(),
                             color: Color {
                                 r: color.r * color_darkness,
                                 g: color.g * color_darkness,
