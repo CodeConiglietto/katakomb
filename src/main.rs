@@ -26,6 +26,7 @@ use std::time::Duration;
 use std::{cmp::Ordering, env, path::PathBuf};
 
 mod editor;
+mod ui;
 
 use crate::{
     constants::*,

@@ -3,7 +3,7 @@ use std::{
     convert::TryInto,
 };
 
-use ggez::{event::EventHandler, Context, GameResult};
+use ggez::{event::EventHandler, graphics::Rect, Context, GameResult};
 use internship::IStr;
 use na::Point3;
 use ndarray::Array3;
@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 
 pub struct Editor {
     voxels: BTreeMap<IStr, Voxel>,
-    objects: BTreeMap<IStr, Object>,
+    objects: BTreeMap<IStr, Model>,
 
     current: Option<Editable>,
 }
@@ -21,7 +21,7 @@ impl EventHandler for Editor {
         match &mut self.current {
             Some(Editable::Voxel(voxel)) => {}
 
-            Some(Editable::Object(object)) => {}
+            Some(Editable::Model(object)) => {}
 
             None => {}
         }
@@ -33,7 +33,7 @@ impl EventHandler for Editor {
         match &mut self.current {
             Some(Editable::Voxel(voxel)) => {}
 
-            Some(Editable::Object(object)) => {}
+            Some(Editable::Model(object)) => {}
 
             None => {}
         }
@@ -57,12 +57,12 @@ pub struct VoxelFace {
 }
 
 #[derive(Debug, Deserialize, Serialize)]
-pub struct Object {
+pub struct Model {
     voxels: Array3<Option<IStr>>,
 }
 
-impl From<EditableObject> for Object {
-    fn from(mut eo: EditableObject) -> Self {
+impl From<EditableModel> for Model {
+    fn from(mut eo: EditableModel) -> Self {
         let mut w = 0;
         let mut h = 0;
         let mut d = 0;
@@ -84,12 +84,12 @@ impl From<EditableObject> for Object {
 }
 
 #[derive(Clone, Debug)]
-struct EditableObject {
+struct EditableModel {
     voxels: HashMap<Point3<u8>, IStr>,
 }
 
-impl From<Object> for EditableObject {
-    fn from(mut o: Object) -> Self {
+impl From<Model> for EditableModel {
+    fn from(mut o: Model) -> Self {
         Self {
             voxels: o
                 .voxels
@@ -113,7 +113,7 @@ impl From<Object> for EditableObject {
 
 enum Editable {
     Voxel(Voxel),
-    Object(EditableObject),
+    Model(EditableModel),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
