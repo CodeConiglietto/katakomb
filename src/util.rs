@@ -1,9 +1,7 @@
 use na::*;
 use ndarray::prelude::*;
 
-use crate::{
-    rendering::voxel::Voxel,
-};
+use crate::rendering::voxel::Voxel;
 
 pub fn is_in_array(array: ArrayView3<Voxel>, pos: Point3<usize>) -> bool {
     pos.x >= 0

@@ -1,7 +1,7 @@
 use na::*;
 use ndarray::prelude::*;
 
-use crate::{rendering::{drawable::*, voxel::*},};
+use crate::rendering::{drawable::*, voxel::*};
 
 pub fn world_pos_to_index(pos: Point3<f32>) -> Point3<usize> {
     Point3::new(

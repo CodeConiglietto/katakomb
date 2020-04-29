@@ -1,10 +1,8 @@
 use na::*;
 
-use crate::{
-    rendering::{font::*, drawable::*},
-};
+use crate::rendering::{drawable::*, font::*};
 
-use ggez::graphics::{Rect, Color};
+use ggez::graphics::{Color, Rect};
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum VoxelType {

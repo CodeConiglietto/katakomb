@@ -681,67 +681,7 @@ impl EventHandler for MyGame {
 
         let mut weapon_sprite_batch = SpriteBatch::new(self.font.texture.clone());
 
-        let player_gun_scale = 0.75;
-
-        for x in 0..self.player_gun_model.dim().1 {
-            for y in 0..self.player_gun_model.dim().0 {
-                let camera_pos = self.camera_pos;
-
-                //|
-                //V
-                let gun_rotation = Rotation3::from_euler_angles(
-                    self.player_gun_rotation.y,
-                    self.player_gun_rotation.x,
-                    0.0,
-                );
-
-                let mut voxel_offset =
-                    rotation.transform_point(&gun_rotation.transform_point(&Point3::new(
-                        -self.player_ads,
-                        y as f32 * player_gun_scale,
-                        (self.player_gun_model.dim().1 - x) as f32 * player_gun_scale * 0.75
-                            + (0.5 - self.player_gun_recoil),
-                    )));
-
-                //No idea why this is necessary
-                voxel_offset.x -= 1.0;
-
-                //this may explode
-                if let Some(screen_pos) = Point3::from_homogeneous(
-                    model_view_projection * (camera_pos + voxel_offset.coords).to_homogeneous(),
-                ) {
-                    if screen_pos.z >= -1.0 && screen_pos.z <= 1.0 {
-                        let voxel_type = &self.player_gun_model[[y, x]];
-                        let color = voxel_type.get_color();
-                        let color_darkness = (1.0 - screen_pos.z.min(1.0).max(0.0)).powf(1.1);
-
-                        let screen_dest = [
-                            screen_pos.x * WINDOW_WIDTH / 2.0 + WINDOW_WIDTH / 2.0,
-                            screen_pos.y * WINDOW_HEIGHT / 2.0 + WINDOW_HEIGHT / 2.0, //We need to negate this, as 2d screen space is inverse of normalised device coords
-                        ];
-
-                        weapon_sprite_batch.add(DrawParam {
-                            src: voxel_type.get_char_offset(&self.font),
-                            dest: screen_dest.into(),
-                            scale: [
-                                (1.0 - screen_pos.z) * 31.4 * player_gun_scale,
-                                (1.0 - screen_pos.z) * 31.4 * player_gun_scale,
-                            ]
-                            .into(),
-                            color: Color {
-                                r: color.r * color_darkness,
-                                g: color.g * color_darkness,
-                                b: color.b * color_darkness,
-                                a: 1.0,
-                            },
-                            rotation: voxel_type.rotation(),
-                            offset: [0.5, 0.5].into(),
-                            ..DrawParam::default()
-                        });
-                    }
-                }
-            }
-        }
+        rendering::util::draw_player_weapon(&mut weapon_sprite_batch, &self.font, model_view_projection, self.camera_pos, rotation, &self.player_gun_model, self.player_ads, self.player_gun_recoil, self.player_gun_rotation);
 
         ggez::graphics::draw(ctx, &weapon_sprite_batch, DrawParam::default())?;
 

@@ -1,8 +1,6 @@
 use ggez::graphics::*;
 
-use crate::{
-    rendering::font::*,
-};
+use crate::rendering::font::*;
 
 pub trait Drawable {
     fn get_char_offset(&self, font: &KataFont) -> Rect;
