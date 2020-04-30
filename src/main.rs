@@ -32,7 +32,7 @@ use crate::{
     constants::*,
     generation::world::*,
     geometry::util::*,
-    rendering::{drawable::Drawable, font::*, light::*, voxel::*},
+    rendering::{drawable::Drawable, font::*, light::*, tile::*},
     util::*,
     world::util::*,
 };
@@ -75,8 +75,8 @@ struct MyGame {
     blank_texture: Image,
     lighting_sphere: Vec<Point3<f32>>,
     font: KataFont,
-    voxel_array: Array3<Voxel>,
-    draw_voxels: Vec<Voxel>,
+    tile_array: Array3<Tile>,
+    draw_tiles: Vec<Tile>,
     camera_pos: Point3<f32>,
 
     camera_rotation: Point2<f32>,
@@ -88,7 +88,7 @@ struct MyGame {
     lights: Vec<Light>,
     light_noise: OpenSimplex,
 
-    player_gun_model: Array2<VoxelType>,
+    player_gun_model: Array2<TileType>,
     player_gun_timer: u8,
     // player_gun_sound: SoundData,
     player_ads: f32,
@@ -105,14 +105,14 @@ impl MyGame {
 
         set_default_filter(ctx, FilterMode::Nearest);
 
-        use crate::rendering::voxel::VoxelType::*;
+        use crate::rendering::tile::TileType::*;
 
         MyGame {
             blank_texture: Image::solid(ctx, 1, WHITE).unwrap(),
             lighting_sphere: calculate_sphere_surface(LIGHT_RANGE),
             font: load_font(ctx),
-            voxel_array: generate_chunk(Point3::new(0, 0, 0), noise, meta_noise),
-            draw_voxels: Vec::new(),
+            tile_array: generate_chunk(Point3::new(0, 0, 0), noise, meta_noise),
+            draw_tiles: Vec::new(),
             camera_pos: Point3::new(
                 (CHUNK_SIZE / 2) as f32,
                 (CHUNK_SIZE / 2) as f32,
@@ -147,7 +147,7 @@ impl MyGame {
 
 //Tries to fire a bresenham hitscan, returns dest if no collisions
 fn try_bresenham_hitscan(
-    voxel_array: ArrayView3<Voxel>,
+    tile_array: ArrayView3<Tile>,
     src: Point3<i32>,
     dest: Point3<i32>,
 ) -> Point3<i32> {
@@ -159,7 +159,7 @@ fn try_bresenham_hitscan(
         && src.z < CHUNK_SIZE as i32
     {
         for ray_point in calculate_bresenham(src, dest) {
-            let ray_voxel = voxel_array[[
+            let ray_tile = tile_array[[
                 ray_point.x as usize,
                 ray_point.y as usize,
                 ray_point.z as usize,
@@ -173,7 +173,7 @@ fn try_bresenham_hitscan(
                 && ray_point.z >= 0
                 && ray_point.z < CHUNK_SIZE as i32
             {
-                if !ray_voxel.voxel_type.is_transparent() {
+                if !ray_tile.tile_type.is_transparent() {
                     return ray_point;
                 }
             }
@@ -188,11 +188,11 @@ fn try_bresenham_hitscan(
 //Tries to fire a floating point hitscan, returns dest if no collisions
 //This assumes that whatever is being scanned against is in an evenly spaced grid of tile size 1*1*1
 fn try_ray_hitscan(
-    voxel_array: ArrayView3<Voxel>,
+    tile_array: ArrayView3<Tile>,
     src: Point3<f32>,
     dest: Point3<f32>,
 ) -> Point3<f32> {
-    if is_in_array(voxel_array, world_pos_to_index(src)) {
+    if is_in_array(tile_array, world_pos_to_index(src)) {
         let distance = euclidean_distance_squared(src, dest).sqrt();
         let distance_ratios = Point3::new(
             (dest.x - src.x) / distance,
@@ -213,11 +213,11 @@ fn try_ray_hitscan(
                 ray_point.z as usize,
             );
 
-            if is_in_array(voxel_array, world_pos_to_index(ray_point)) {
-                let ray_voxel =
-                    voxel_array[[ray_int_point.x, ray_int_point.y, ray_int_point.z]].clone();
+            if is_in_array(tile_array, world_pos_to_index(ray_point)) {
+                let ray_tile =
+                    tile_array[[ray_int_point.x, ray_int_point.y, ray_int_point.z]].clone();
 
-                if !ray_voxel.voxel_type.is_transparent() {
+                if !ray_tile.tile_type.is_transparent() {
                     return ray_point;
                 }
             }
@@ -247,14 +247,14 @@ fn get_cube_points(pos: Point3<f32>) -> Vec<Point3<f32>> {
 }
 
 fn hitscan_tile(
-    voxel_array: ArrayView3<Voxel>,
+    tile_array: ArrayView3<Tile>,
     src: Point3<f32>,
     dest: Point3<f32>,
 ) -> Vec<Point3<f32>> {
     let mut hits = Vec::new();
 
     for target in get_cube_points(dest) {
-        let hit = try_ray_hitscan(voxel_array, src, target);
+        let hit = try_ray_hitscan(tile_array, src, target);
 
         if world_pos_to_index(hit) != world_pos_to_index(target) {
             hits.push(hit);
@@ -264,15 +264,18 @@ fn hitscan_tile(
     hits
 }
 
-// fn get_voxel_from_point(voxel_array: ArrayView3<Voxel>, pos: Point3::<f32>) -> Voxel{
+// fn get_tile_from_point(tile_array: ArrayView3<Tile>, pos: Point3::<f32>) -> Tile{
 
 // }
 
-fn get_light_hitscans(light: &Light, lighting_sphere: &Vec<Point3<f32>>, voxel_array: ArrayView3<Voxel>) -> Vec<Point3<f32>>
-{
+fn get_light_hitscans(
+    light: &Light,
+    lighting_sphere: &Vec<Point3<f32>>,
+    tile_array: ArrayView3<Tile>,
+) -> Vec<Point3<f32>> {
     let mut ray_hits = Vec::new();
 
-    // voxel_array[[
+    // tile_array[[
     //         light.pos.x.floor() as usize,
     //         light.pos.y.floor() as usize,
     //         light.pos.z.floor() as usize,
@@ -288,17 +291,20 @@ fn get_light_hitscans(light: &Light, lighting_sphere: &Vec<Point3<f32>>, voxel_a
             target_point.z + light.pos.z + light_target.z,
         );
 
-        ray_hits.append(&mut hitscan_tile(voxel_array, light.pos, target_point_offset));
+        ray_hits.append(&mut hitscan_tile(
+            tile_array,
+            light.pos,
+            target_point_offset,
+        ));
     }
 
     ray_hits
 }
 
-fn get_voxel_at(pos: Point3<f32>, voxel_array: &Array3<Voxel>) -> Voxel
-{
+fn get_tile_at(pos: Point3<f32>, tile_array: &Array3<Tile>) -> Tile {
     let index = world_pos_to_index(pos);
 
-    voxel_array[[index.x, index.y, index.z]].clone()
+    tile_array[[index.x, index.y, index.z]].clone()
 }
 
 impl EventHandler for MyGame {
@@ -348,9 +354,9 @@ impl EventHandler for MyGame {
                 for cube_point in get_cube_points(Point3::new(-0.5, -0.5, -0.5)) {
                     let ray_target = self.camera_pos + (cube_point.coords * MAX_SOUND_RANGE * 2.0);
 
-                    if is_in_array(self.voxel_array.view(), world_pos_to_index(ray_target)) {
+                    if is_in_array(self.tile_array.view(), world_pos_to_index(ray_target)) {
                         let ray_hit = try_bresenham_hitscan(
-                            self.voxel_array.view(),
+                            self.tile_array.view(),
                             world_pos_to_int(self.camera_pos),
                             world_pos_to_int(ray_target),
                         );
@@ -449,13 +455,13 @@ impl EventHandler for MyGame {
             self.nuke_lighting = true;
         }
 
-        self.draw_voxels.clear();
+        self.draw_tiles.clear();
 
-        //let voxel_points = self.voxel_draw_points;
+        //let tile_points = self.tile_draw_points;
         let camera_pos = self.camera_pos;
 
-        let voxel_array = &self.voxel_array;
-        let zip_iter = ndarray::Zip::indexed(voxel_array);
+        let tile_array = &self.tile_array;
+        let zip_iter = ndarray::Zip::indexed(tile_array);
 
         let _int_camera_pos = Point3::new(
             camera_pos.x.floor() as i32,
@@ -465,92 +471,100 @@ impl EventHandler for MyGame {
 
         let nuke_lighting = self.nuke_lighting;
 
-        //populate voxels to draw
+        //populate tiles to draw
 
-        let voxel_array_view = self.voxel_array.view();
+        let tile_array_view = self.tile_array.view();
 
-        self.lights = self.lights.par_iter().filter(|light| light.persistent).cloned().collect();
-
-        if is_in_array(self.voxel_array.view(), world_pos_to_index(camera_pos)) {
-                let player_light = Light {
-                    pos: camera_pos,
-                    facing: gun_facing,
-                    illumination: 0.5,
-                    range: 24.0,
-                    persistent: false,
-                };
-    
-                self.lights.push(player_light);
-                // dbg!(&lights);
-    
-                if muzzle_flash {
-                    let muzzle_light = Light {
-                        pos: camera_pos,
-                        facing: gun_facing,
-                        illumination: 0.9,
-                        range: 0.0,
-                        persistent: false,
-                    };
-    
-                    self.lights.push(muzzle_light);
-                }
-            }
-
-        let light_iter = self.lights.par_iter();
-        let mut draw_voxels: Vec<_> = 
-            light_iter
-            .flat_map(|light| get_light_hitscans(light, &self.lighting_sphere, voxel_array_view))
-            .map(|pos| 
-                {
-                    let mut vox = get_voxel_at(pos, &self.voxel_array).clone(); 
-                    vox.illumination = 0.5;//euclidean_distance_squared(vox.pos, light.pos) / (LIGHT_RANGE * LIGHT_RANGE) as f32; 
-                    vox
-                }
-            )
+        self.lights = self
+            .lights
+            .par_iter()
+            .filter(|light| light.persistent)
+            .cloned()
             .collect();
 
-        draw_voxels = draw_voxels.par_iter().filter(|voxel| any_neighbour_empty(&voxel_array.view(), world_pos_to_int(voxel.pos))
-                            && world_pos_to_index(try_ray_hitscan(
-                                voxel_array.view(),
-                                camera_pos,
-                                voxel.pos,
-                            )) == world_pos_to_index(voxel.pos)).cloned().collect();
+        if is_in_array(self.tile_array.view(), world_pos_to_index(camera_pos)) {
+            let player_light = Light {
+                pos: camera_pos,
+                facing: gun_facing,
+                illumination: 0.5,
+                range: 24.0,
+                persistent: false,
+            };
 
-        draw_voxels.sort_unstable_by(|a, b| {
+            self.lights.push(player_light);
+            // dbg!(&lights);
+
+            if muzzle_flash {
+                let muzzle_light = Light {
+                    pos: camera_pos,
+                    facing: gun_facing,
+                    illumination: 0.9,
+                    range: 0.0,
+                    persistent: false,
+                };
+
+                self.lights.push(muzzle_light);
+            }
+        }
+
+        let light_iter = self.lights.par_iter();
+        let mut draw_tiles: Vec<_> = light_iter
+            .flat_map(|light| get_light_hitscans(light, &self.lighting_sphere, tile_array_view))
+            .map(|pos| {
+                let mut vox = get_tile_at(pos, &self.tile_array).clone();
+                vox.illumination = 0.5; //euclidean_distance_squared(vox.pos, light.pos) / (LIGHT_RANGE * LIGHT_RANGE) as f32;
+                vox
+            })
+            .collect();
+
+        draw_tiles = draw_tiles
+            .par_iter()
+            .filter(|tile| {
+                any_neighbour_empty(&tile_array.view(), world_pos_to_int(tile.pos))
+                    && world_pos_to_index(try_ray_hitscan(tile_array.view(), camera_pos, tile.pos))
+                        == world_pos_to_index(tile.pos)
+            })
+            .cloned()
+            .collect();
+
+        draw_tiles.sort_unstable_by(|a, b| {
             euclidean_distance_squared(b.pos, camera_pos)
                 .partial_cmp(&euclidean_distance_squared(a.pos, camera_pos))
                 .unwrap_or(Ordering::Equal)
         });
 
-        draw_voxels.dedup_by(|a, b| 
-            {
-                let equal = world_pos_to_index(a.pos) == world_pos_to_index(b.pos); 
-                if equal {b.illumination = (b.illumination + 0.01).min(1.0)};
-                if b.illumination > 1.0 {panic!()};
-                equal
-            });
+        draw_tiles.dedup_by(|a, b| {
+            let equal = world_pos_to_index(a.pos) == world_pos_to_index(b.pos);
+            if equal {
+                b.illumination = (b.illumination + 0.01).min(1.0)
+            };
+            if b.illumination > 1.0 {
+                panic!()
+            };
+            equal
+        });
 
-        std::mem::swap(&mut draw_voxels, &mut self.draw_voxels);
+        std::mem::swap(&mut draw_tiles, &mut self.draw_tiles);
 
-        // self.draw_voxels.clear();
-        // self.draw_voxels.par_extend(
+        // self.draw_tiles.clear();
+        // self.draw_tiles.par_extend(
         //     zip_iter
         //         .into_par_iter()
         //         .filter(|((x, y, z), v)| {
-        //             (!v.voxel_type.is_transparent() || v.voxel_type.illuminates())
+        //             (!v.tile_type.is_transparent() || v.tile_type.illuminates())
         //                 && (v.illumination > 0.01
-        //                     || v.voxel_type.illuminates()
+        //                     || v.tile_type.illuminates()
         //                     || euclidean_distance_squared(camera_pos, v.pos) < PLAYER_SIGHT_RANGE)
         //                 && {
         //                     let v_pos = Point3::new(*x as i32, *y as i32, *z as i32);
-        //                     any_neighbour_empty(&voxel_array.view(), v_pos)
+        //                     any_neighbour_empty(&tile_array.view(), v_pos)
         //                 }
         //                 && (world_pos_to_index(try_ray_hitscan(
-        //                     voxel_array.view(),
+        //                     tile_array.view(),
         //                     camera_pos,
         //                     v.pos,
         //                 )) == world_pos_to_index(v.pos)
-        //                     || hitscan_tile(voxel_array.view(), camera_pos, v.pos).len() != 8
+        //                     || hitscan_tile(tile_array.view(), camera_pos, v.pos).len() != 8
         //                     || nuke_lighting)
         //         })
         //         .map(|((_x, _y, _z), v)| {
@@ -566,15 +580,15 @@ impl EventHandler for MyGame {
 
         // self.nuke_lighting = false;
 
-        // self.draw_voxels.sort_unstable_by(|a, b| {
+        // self.draw_tiles.sort_unstable_by(|a, b| {
         //     euclidean_distance_squared(b.pos, camera_pos)
         //         .partial_cmp(&euclidean_distance_squared(a.pos, camera_pos))
         //         .unwrap_or(Ordering::Equal)
         // });
 
         // //Copy back to our world
-        // for new_vox in &mut self.draw_voxels {
-        //     self.voxel_array[[
+        // for new_vox in &mut self.draw_tiles {
+        //     self.tile_array[[
         //         new_vox.pos.x.floor() as usize,
         //         new_vox.pos.y.floor() as usize,
         //         new_vox.pos.z.floor() as usize,
@@ -583,9 +597,9 @@ impl EventHandler for MyGame {
         // }
 
         // let mut lights: Vec<_> = self
-        //     .draw_voxels
+        //     .draw_tiles
         //     .iter()
-        //     .filter(|v| v.voxel_type.illuminates())
+        //     .filter(|v| v.tile_type.illuminates())
         //     .map(|v| Light {
         //         pos: Point3::new(v.pos.x + 0.5, v.pos.y + 0.5, v.pos.z + 0.5),
         //         facing: Point3::new(0.0, 1.0, 0.0),
@@ -594,7 +608,7 @@ impl EventHandler for MyGame {
         //     })
         //     .collect();
 
-        // if is_in_array(self.voxel_array.view(), world_pos_to_index(camera_pos)) {
+        // if is_in_array(self.tile_array.view(), world_pos_to_index(camera_pos)) {
         //     let player_light = Light {
         //         pos: camera_pos,
         //         facing: gun_facing,
@@ -618,7 +632,7 @@ impl EventHandler for MyGame {
         // }
 
         // for light in lights {
-        //     self.voxel_array[[
+        //     self.tile_array[[
         //         light.pos.x.floor() as usize,
         //         light.pos.y.floor() as usize,
         //         light.pos.z.floor() as usize,
@@ -642,21 +656,21 @@ impl EventHandler for MyGame {
         //         );
 
         //         let ray_hits =
-        //             hitscan_tile(self.voxel_array.view(), light.pos, target_point_offset);
+        //             hitscan_tile(self.tile_array.view(), light.pos, target_point_offset);
 
         //         for hit in ray_hits {
-        //             if is_in_array(self.voxel_array.view(), world_pos_to_index(hit))
+        //             if is_in_array(self.tile_array.view(), world_pos_to_index(hit))
         //                 && world_pos_to_index(hit) != world_pos_to_index(target_point_offset)
         //             {
         //                 let hit_index = world_pos_to_index(hit);
 
-        //                 let ray_voxel =
-        //                     &mut self.voxel_array[[hit_index.x, hit_index.y, hit_index.z]];
+        //                 let ray_tile =
+        //                     &mut self.tile_array[[hit_index.x, hit_index.y, hit_index.z]];
 
-        //                 ray_voxel.illumination = (ray_voxel.illumination
+        //                 ray_tile.illumination = (ray_tile.illumination
         //                     + (light.illumination
         //                         / euclidean_distance_squared(
-        //                             ray_voxel.pos,
+        //                             ray_tile.pos,
         //                             Point3::new(
         //                                 light.pos.x as f32,
         //                                 light.pos.y as f32,
@@ -714,14 +728,14 @@ impl EventHandler for MyGame {
 
         let mut sprite_batch = SpriteBatch::new(self.font.texture.clone());
 
-        for voxel in self.draw_voxels.iter() {
+        for tile in self.draw_tiles.iter() {
             if let Some(screen_pos) =
-                Point3::from_homogeneous(model_view_projection * voxel.pos.to_homogeneous())
+                Point3::from_homogeneous(model_view_projection * tile.pos.to_homogeneous())
             {
                 if screen_pos.z >= -1.0 && screen_pos.z <= 1.0 {
-                    let color = voxel.voxel_type.get_color();
+                    let color = tile.tile_type.get_color();
                     let color_darkness =
-                        (1.0 - screen_pos.z.min(1.0).max(0.0)) * 0.25 + voxel.illumination * 0.75;
+                        (1.0 - screen_pos.z.min(1.0).max(0.0)) * 0.25 + tile.illumination * 0.75;
                     let color_back_darkness = color_darkness * 0.75;
 
                     let screen_dest = [
@@ -729,7 +743,7 @@ impl EventHandler for MyGame {
                         -screen_pos.y * WINDOW_HEIGHT / 2.0 + WINDOW_HEIGHT / 2.0, //We need to negate this, as 2d screen space is inverse of normalised device coords
                     ];
 
-                    if !voxel.voxel_type.is_transparent() {
+                    if !tile.tile_type.is_transparent() {
                         sprite_batch.add(DrawParam {
                             src: get_font_offset(0x2CF, &self.font),
                             dest: screen_dest.into(),
@@ -747,7 +761,7 @@ impl EventHandler for MyGame {
                     }
 
                     sprite_batch.add(DrawParam {
-                        src: voxel.voxel_type.get_char_offset(&self.font),
+                        src: tile.tile_type.get_char_offset(&self.font),
                         dest: screen_dest.into(),
                         scale: [(1.0 - screen_pos.z) * 31.4, (1.0 - screen_pos.z) * 31.4].into(),
                         color: Color {
@@ -766,7 +780,17 @@ impl EventHandler for MyGame {
 
         let mut weapon_sprite_batch = SpriteBatch::new(self.font.texture.clone());
 
-        rendering::util::draw_player_weapon(&mut weapon_sprite_batch, &self.font, model_view_projection, self.camera_pos, rotation, &self.player_gun_model, self.player_ads, self.player_gun_recoil, self.player_gun_rotation);
+        rendering::util::draw_player_weapon(
+            &mut weapon_sprite_batch,
+            &self.font,
+            model_view_projection,
+            self.camera_pos,
+            rotation,
+            &self.player_gun_model,
+            self.player_ads,
+            self.player_gun_recoil,
+            self.player_gun_rotation,
+        );
 
         ggez::graphics::draw(ctx, &weapon_sprite_batch, DrawParam::default())?;
 

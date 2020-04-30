@@ -1,7 +1,7 @@
 use na::*;
 use ndarray::prelude::*;
 
-use crate::rendering::{drawable::*, voxel::*};
+use crate::rendering::{drawable::*, tile::*};
 
 pub fn world_pos_to_index(pos: Point3<f32>) -> Point3<usize> {
     Point3::new(
@@ -19,7 +19,7 @@ pub fn world_pos_to_int(pos: Point3<f32>) -> Point3<i32> {
     )
 }
 
-pub fn any_neighbour_empty(array: &ArrayView3<Voxel>, pos: Point3<i32>) -> bool {
+pub fn any_neighbour_empty(array: &ArrayView3<Tile>, pos: Point3<i32>) -> bool {
     for x in -1..2 {
         for y in -1..2 {
             for z in -1..2 {
@@ -31,7 +31,7 @@ pub fn any_neighbour_empty(array: &ArrayView3<Voxel>, pos: Point3<i32>) -> bool 
                     || y_index >= array.dim().1
                     || z_index >= array.dim().2
                     || array[[x_index, y_index, z_index]]
-                        .voxel_type
+                        .tile_type
                         .is_transparent()
                 {
                     return true;

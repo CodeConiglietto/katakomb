@@ -1,26 +1,32 @@
 use na::*;
 use ndarray::prelude::*;
 
-use ggez::{graphics::{Color, DrawParam, spritebatch::SpriteBatch}};
+use ggez::graphics::{spritebatch::SpriteBatch, Color, DrawParam};
 
 use crate::{
     constants::*,
-    rendering::{drawable::*, font::*, voxel::*},
+    rendering::{drawable::*, font::*, tile::*},
 };
 
-pub fn draw_player_weapon(weapon_sprite_batch: &mut SpriteBatch, font: &KataFont, model_view_projection: Matrix4<f32>, camera_pos: Point3<f32>, rotation: Rotation3<f32>, player_gun_model: &Array2<VoxelType>, player_ads: f32, player_gun_recoil: f32, player_gun_rotation: Point2<f32>)
-{
+pub fn draw_player_weapon(
+    weapon_sprite_batch: &mut SpriteBatch,
+    font: &KataFont,
+    model_view_projection: Matrix4<f32>,
+    camera_pos: Point3<f32>,
+    rotation: Rotation3<f32>,
+    player_gun_model: &Array2<TileType>,
+    player_ads: f32,
+    player_gun_recoil: f32,
+    player_gun_rotation: Point2<f32>,
+) {
     let player_gun_scale = 0.75;
 
     for x in 0..player_gun_model.dim().1 {
         for y in 0..player_gun_model.dim().0 {
-            let gun_rotation = Rotation3::from_euler_angles(
-                player_gun_rotation.y,
-                player_gun_rotation.x,
-                0.0,
-            );
+            let gun_rotation =
+                Rotation3::from_euler_angles(player_gun_rotation.y, player_gun_rotation.x, 0.0);
 
-            let mut voxel_offset =
+            let mut tile_offset =
                 rotation.transform_point(&gun_rotation.transform_point(&Point3::new(
                     -player_ads,
                     y as f32 * player_gun_scale,
@@ -29,15 +35,15 @@ pub fn draw_player_weapon(weapon_sprite_batch: &mut SpriteBatch, font: &KataFont
                 )));
 
             //No idea why this is necessary
-            voxel_offset.x -= 1.0;
+            tile_offset.x -= 1.0;
 
             //this may explode
             if let Some(screen_pos) = Point3::from_homogeneous(
-                model_view_projection * (camera_pos + voxel_offset.coords).to_homogeneous(),
+                model_view_projection * (camera_pos + tile_offset.coords).to_homogeneous(),
             ) {
                 if screen_pos.z >= -1.0 && screen_pos.z <= 1.0 {
-                    let voxel_type = &player_gun_model[[y, x]];
-                    let color = voxel_type.get_color();
+                    let tile_type = &player_gun_model[[y, x]];
+                    let color = tile_type.get_color();
                     let color_darkness = (1.0 - screen_pos.z.min(1.0).max(0.0)).powf(1.1);
 
                     let screen_dest = [
@@ -46,7 +52,7 @@ pub fn draw_player_weapon(weapon_sprite_batch: &mut SpriteBatch, font: &KataFont
                     ];
 
                     weapon_sprite_batch.add(DrawParam {
-                        src: voxel_type.get_char_offset(&font),
+                        src: tile_type.get_char_offset(&font),
                         dest: screen_dest.into(),
                         scale: [
                             (1.0 - screen_pos.z) * 31.4 * player_gun_scale,
@@ -59,7 +65,7 @@ pub fn draw_player_weapon(weapon_sprite_batch: &mut SpriteBatch, font: &KataFont
                             b: color.b * color_darkness,
                             a: 1.0,
                         },
-                        rotation: voxel_type.rotation(),
+                        rotation: tile_type.rotation(),
                         offset: [0.5, 0.5].into(),
                         ..DrawParam::default()
                     });

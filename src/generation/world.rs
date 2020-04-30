@@ -5,17 +5,11 @@ use rand::prelude::*;
 
 use crate::{
     constants::*,
-    rendering::voxel::{Voxel, *},
+    rendering::tile::{Tile, *},
     util::*,
 };
 
-pub fn gen_voxel(
-    noise: OpenSimplex,
-    meta_noise: OpenSimplex,
-    x: usize,
-    y: usize,
-    z: usize,
-) -> Voxel {
+pub fn gen_tile(noise: OpenSimplex, meta_noise: OpenSimplex, x: usize, y: usize, z: usize) -> Tile {
     let noise_value = noise
         .get([x as f64 * 0.1, y as f64 * 0.025, z as f64 * 0.1])
         .abs()
@@ -29,13 +23,13 @@ pub fn gen_voxel(
     let cave_threshold =
         ((y as f64 - (CHUNK_SIZE / 2) as f64).abs() / (CHUNK_SIZE / 2) as f64).max(0.0) + 0.05;
 
-    Voxel {
+    Tile {
         pos: Point3::new(x as f32, y as f32, z as f32),
         illumination: 0.5,
-        voxel_type: if noise_value > cave_threshold {
-            VoxelType::Air
+        tile_type: if noise_value > cave_threshold {
+            TileType::Air
         } else {
-            VoxelType::Rock
+            TileType::Rock
         },
     }
 }
@@ -44,9 +38,9 @@ pub fn generate_chunk(
     offset: Point3<i32>,
     noise: OpenSimplex,
     meta_noise: OpenSimplex,
-) -> Array3<Voxel> {
+) -> Array3<Tile> {
     let mut chunk = Array3::from_shape_fn((CHUNK_SIZE, CHUNK_SIZE, CHUNK_SIZE), |(x, y, z)| {
-        gen_voxel(noise, meta_noise, x, y, z)
+        gen_tile(noise, meta_noise, x, y, z)
     });
 
     for x in 0..chunk.dim().0 {
@@ -57,13 +51,13 @@ pub fn generate_chunk(
                 if thread_rng().gen_range(0, 500) == 0
                     && is_in_array(chunk.view(), pos)
                     && is_in_array(chunk.view(), pos_under)
-                    && chunk[[x, y, z]].voxel_type == VoxelType::Air
-                    && chunk[[x, y - 1, z]].voxel_type == VoxelType::Rock
+                    && chunk[[x, y, z]].tile_type == TileType::Air
+                    && chunk[[x, y - 1, z]].tile_type == TileType::Rock
                 {
-                    chunk[[x, y, z]] = Voxel {
+                    chunk[[x, y, z]] = Tile {
                         pos: Point3::new(x as f32, y as f32, z as f32),
                         illumination: 0.5,
-                        voxel_type: VoxelType::Candle,
+                        tile_type: TileType::Candle,
                     }
                 }
             }
