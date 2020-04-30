@@ -19,6 +19,7 @@ use rand::prelude::*;
 use rayon::prelude::*;
 use rodio::Source;
 
+use std::collections::BTreeSet;
 use std::fs::File;
 use std::io::BufReader;
 use std::time::Duration;
@@ -82,6 +83,8 @@ struct MyGame {
     nuke_lighting: bool,
 
     current_tic: u64,
+
+    lights: Vec<Light>,
     light_noise: OpenSimplex,
 
     player_gun_model: Array2<VoxelType>,
@@ -117,6 +120,7 @@ impl MyGame {
             camera_rotation: Point2::origin(),
             nuke_lighting: false,
             current_tic: 0,
+            lights: Vec::new(),
             light_noise: OpenSimplex::new(),
             player_gun_recoil: 0.0,
             player_gun_rotation: Point2::origin(),
@@ -262,6 +266,39 @@ fn hitscan_tile(
 // fn get_voxel_from_point(voxel_array: ArrayView3<Voxel>, pos: Point3::<f32>) -> Voxel{
 
 // }
+
+fn get_light_hitscans(light: &Light, lighting_sphere: &Vec<Point3<f32>>, voxel_array: ArrayView3<Voxel>) -> Vec<Point3<f32>>
+{
+    let mut ray_hits = Vec::new();
+
+    // voxel_array[[
+    //         light.pos.x.floor() as usize,
+    //         light.pos.y.floor() as usize,
+    //         light.pos.z.floor() as usize,
+    //     ]]
+    //     .illumination = 0.9;
+
+    let light_target: Point3<f32> = Point3::origin() + (light.facing * light.range).coords;
+
+    for target_point in lighting_sphere {
+        let target_point_offset = Point3::new(
+            target_point.x + light.pos.x + light_target.x,
+            target_point.y + light.pos.y + light_target.y,
+            target_point.z + light.pos.z + light_target.z,
+        );
+
+        ray_hits.append(&mut hitscan_tile(voxel_array, light.pos, target_point_offset));
+    }
+
+    ray_hits
+}
+
+fn get_voxel_at(pos: Point3<f32>, voxel_array: &Array3<Voxel>) -> Voxel
+{
+    let index = world_pos_to_index(pos);
+
+    voxel_array[[index.x, index.y, index.z]].clone()
+}
 
 impl EventHandler for MyGame {
     fn update(&mut self, ctx: &mut Context) -> GameResult<()> {
@@ -411,26 +448,6 @@ impl EventHandler for MyGame {
             self.nuke_lighting = true;
         }
 
-        // let sound_queue = &mut self.sound_queue;
-
-        // let mut removal_indices = Vec::new();
-
-        // //this order is very important for removing items properly
-        // for i in (0..sound_queue.len()).rev()
-        // {
-        //     if (sound_queue[i].0 as f64) < update_time
-        //     {
-        //         sound_queue[i].1.play_detached().unwrap();
-        //         removal_indices.push(i);
-        //         assert_eq!(removal_indices.len() > 0, true);
-        //     }
-        // }
-
-        // for index in removal_indices
-        // {
-        //     self.sound_queue.remove(index);
-        // }
-
         self.draw_voxels.clear();
 
         //let voxel_points = self.voxel_draw_points;
@@ -447,145 +464,212 @@ impl EventHandler for MyGame {
 
         let nuke_lighting = self.nuke_lighting;
 
-        self.draw_voxels.clear();
-        self.draw_voxels.par_extend(
-            zip_iter
-                .into_par_iter()
-                .filter(|((x, y, z), v)| {
-                    (!v.voxel_type.is_transparent() || v.voxel_type.illuminates())
-                        && (v.illumination > 0.01
-                            || v.voxel_type.illuminates()
-                            || euclidean_distance_squared(camera_pos, v.pos) < PLAYER_SIGHT_RANGE)
-                        && {
-                            let v_pos = Point3::new(*x as i32, *y as i32, *z as i32);
-                            any_neighbour_empty(&voxel_array.view(), v_pos)
-                        }
-                        && (world_pos_to_index(try_ray_hitscan(
-                            voxel_array.view(),
-                            camera_pos,
-                            v.pos,
-                        )) == world_pos_to_index(v.pos)
-                            || hitscan_tile(voxel_array.view(), camera_pos, v.pos).len() != 8
-                            || nuke_lighting)
-                })
-                .map(|((_x, _y, _z), v)| {
-                    let mut new_v = v.clone();
-                    if nuke_lighting {
-                        new_v.illumination = 1.0
-                    }
-                    new_v.illumination *= 1.0 - (0.5 * new_v.illumination.min(0.99)).max(0.01);
-                    new_v.illumination = (new_v.illumination - 0.01).max(0.0);
-                    new_v
-                }),
-        );
+        //populate voxels to draw
 
-        self.nuke_lighting = false;
+        let voxel_array_view = self.voxel_array.view();
 
-        self.draw_voxels.sort_unstable_by(|a, b| {
+        self.lights = self.lights.par_iter().filter(|light| light.persistent).cloned().collect();
+
+        if is_in_array(self.voxel_array.view(), world_pos_to_index(camera_pos)) {
+                let player_light = Light {
+                    pos: camera_pos,
+                    facing: gun_facing,
+                    illumination: 0.5,
+                    range: 24.0,
+                    persistent: false,
+                };
+    
+                self.lights.push(player_light);
+                // dbg!(&lights);
+    
+                if muzzle_flash {
+                    let muzzle_light = Light {
+                        pos: camera_pos,
+                        facing: gun_facing,
+                        illumination: 0.9,
+                        range: 0.0,
+                        persistent: false,
+                    };
+    
+                    self.lights.push(muzzle_light);
+                }
+            }
+
+        let light_iter = self.lights.par_iter();
+        let mut draw_voxels: Vec<_> = 
+            light_iter
+            .flat_map(|light| get_light_hitscans(light, &self.lighting_sphere, voxel_array_view))
+            .map(|pos| 
+                {
+                    let mut vox = get_voxel_at(pos, &self.voxel_array).clone(); 
+                    vox.illumination = 0.5;//euclidean_distance_squared(vox.pos, light.pos) / (LIGHT_RANGE * LIGHT_RANGE) as f32; 
+                    vox
+                }
+            )
+            .collect();
+
+        draw_voxels = draw_voxels.par_iter().filter(|voxel| any_neighbour_empty(&voxel_array.view(), world_pos_to_int(voxel.pos))
+                            && world_pos_to_index(try_ray_hitscan(
+                                voxel_array.view(),
+                                camera_pos,
+                                voxel.pos,
+                            )) == world_pos_to_index(voxel.pos)).cloned().collect();
+
+        draw_voxels.sort_unstable_by(|a, b| {
             euclidean_distance_squared(b.pos, camera_pos)
                 .partial_cmp(&euclidean_distance_squared(a.pos, camera_pos))
                 .unwrap_or(Ordering::Equal)
         });
 
-        //Copy back to our world
-        for new_vox in &mut self.draw_voxels {
-            self.voxel_array[[
-                new_vox.pos.x.floor() as usize,
-                new_vox.pos.y.floor() as usize,
-                new_vox.pos.z.floor() as usize,
-            ]]
-            .illumination = new_vox.illumination;
-        }
+        draw_voxels.dedup_by(|a, b| 
+            {
+                let equal = world_pos_to_index(a.pos) == world_pos_to_index(b.pos); 
+                if equal {b.illumination = (b.illumination + 0.01).min(1.0)};
+                if b.illumination > 1.0 {panic!()};
+                equal
+            });
 
-        let mut lights: Vec<_> = self
-            .draw_voxels
-            .iter()
-            .filter(|v| v.voxel_type.illuminates())
-            .map(|v| Light {
-                pos: Point3::new(v.pos.x + 0.5, v.pos.y + 0.5, v.pos.z + 0.5),
-                facing: Point3::new(0.0, 1.0, 0.0),
-                illumination: 0.25,
-                range: 0.0,
-            })
-            .collect();
+        std::mem::swap(&mut draw_voxels, &mut self.draw_voxels);
 
-        if is_in_array(self.voxel_array.view(), world_pos_to_index(camera_pos)) {
-            let player_light = Light {
-                pos: camera_pos,
-                facing: gun_facing,
-                illumination: 0.5,
-                range: 24.0,
-            };
+        // self.draw_voxels.clear();
+        // self.draw_voxels.par_extend(
+        //     zip_iter
+        //         .into_par_iter()
+        //         .filter(|((x, y, z), v)| {
+        //             (!v.voxel_type.is_transparent() || v.voxel_type.illuminates())
+        //                 && (v.illumination > 0.01
+        //                     || v.voxel_type.illuminates()
+        //                     || euclidean_distance_squared(camera_pos, v.pos) < PLAYER_SIGHT_RANGE)
+        //                 && {
+        //                     let v_pos = Point3::new(*x as i32, *y as i32, *z as i32);
+        //                     any_neighbour_empty(&voxel_array.view(), v_pos)
+        //                 }
+        //                 && (world_pos_to_index(try_ray_hitscan(
+        //                     voxel_array.view(),
+        //                     camera_pos,
+        //                     v.pos,
+        //                 )) == world_pos_to_index(v.pos)
+        //                     || hitscan_tile(voxel_array.view(), camera_pos, v.pos).len() != 8
+        //                     || nuke_lighting)
+        //         })
+        //         .map(|((_x, _y, _z), v)| {
+        //             let mut new_v = v.clone();
+        //             if nuke_lighting {
+        //                 new_v.illumination = 1.0
+        //             }
+        //             new_v.illumination *= 1.0 - (0.5 * new_v.illumination.min(0.99)).max(0.01);
+        //             new_v.illumination = (new_v.illumination - 0.01).max(0.0);
+        //             new_v
+        //         }),
+        // );
 
-            lights.push(player_light);
-            // dbg!(&lights);
+        // self.nuke_lighting = false;
 
-            if muzzle_flash {
-                let muzzle_light = Light {
-                    pos: camera_pos,
-                    facing: gun_facing,
-                    illumination: 0.9,
-                    range: 0.0,
-                };
+        // self.draw_voxels.sort_unstable_by(|a, b| {
+        //     euclidean_distance_squared(b.pos, camera_pos)
+        //         .partial_cmp(&euclidean_distance_squared(a.pos, camera_pos))
+        //         .unwrap_or(Ordering::Equal)
+        // });
 
-                lights.push(muzzle_light);
-            }
-        }
+        // //Copy back to our world
+        // for new_vox in &mut self.draw_voxels {
+        //     self.voxel_array[[
+        //         new_vox.pos.x.floor() as usize,
+        //         new_vox.pos.y.floor() as usize,
+        //         new_vox.pos.z.floor() as usize,
+        //     ]]
+        //     .illumination = new_vox.illumination;
+        // }
 
-        for light in lights {
-            self.voxel_array[[
-                light.pos.x.floor() as usize,
-                light.pos.y.floor() as usize,
-                light.pos.z.floor() as usize,
-            ]]
-            .illumination = 0.9;
+        // let mut lights: Vec<_> = self
+        //     .draw_voxels
+        //     .iter()
+        //     .filter(|v| v.voxel_type.illuminates())
+        //     .map(|v| Light {
+        //         pos: Point3::new(v.pos.x + 0.5, v.pos.y + 0.5, v.pos.z + 0.5),
+        //         facing: Point3::new(0.0, 1.0, 0.0),
+        //         illumination: 0.25,
+        //         range: 0.0,
+        //     })
+        //     .collect();
 
-            let light_target: Point3<f32> = Point3::origin() + (light.facing * light.range).coords;
+        // if is_in_array(self.voxel_array.view(), world_pos_to_index(camera_pos)) {
+        //     let player_light = Light {
+        //         pos: camera_pos,
+        //         facing: gun_facing,
+        //         illumination: 0.5,
+        //         range: 24.0,
+        //     };
 
-            let light_deviance = self.light_noise.get([
-                light.pos.x as f64,
-                light.pos.y as f64,
-                light.pos.z as f64,
-                self.current_tic as f64 * 0.5,
-            ]);
+        //     lights.push(player_light);
+        //     // dbg!(&lights);
 
-            for target_point in &self.lighting_sphere {
-                let target_point_offset = Point3::new(
-                    target_point.x + light.pos.x + light_target.x,
-                    target_point.y + light.pos.y + light_target.y,
-                    target_point.z + light.pos.z + light_target.z,
-                );
+        //     if muzzle_flash {
+        //         let muzzle_light = Light {
+        //             pos: camera_pos,
+        //             facing: gun_facing,
+        //             illumination: 0.9,
+        //             range: 0.0,
+        //         };
 
-                let ray_hits =
-                    hitscan_tile(self.voxel_array.view(), light.pos, target_point_offset);
+        //         lights.push(muzzle_light);
+        //     }
+        // }
 
-                for hit in ray_hits {
-                    if is_in_array(self.voxel_array.view(), world_pos_to_index(hit))
-                        && world_pos_to_index(hit) != world_pos_to_index(target_point_offset)
-                    {
-                        let hit_index = world_pos_to_index(hit);
+        // for light in lights {
+        //     self.voxel_array[[
+        //         light.pos.x.floor() as usize,
+        //         light.pos.y.floor() as usize,
+        //         light.pos.z.floor() as usize,
+        //     ]]
+        //     .illumination = 0.9;
 
-                        let ray_voxel =
-                            &mut self.voxel_array[[hit_index.x, hit_index.y, hit_index.z]];
+        //     let light_target: Point3<f32> = Point3::origin() + (light.facing * light.range).coords;
 
-                        ray_voxel.illumination = (ray_voxel.illumination
-                            + (light.illumination
-                                / euclidean_distance_squared(
-                                    ray_voxel.pos,
-                                    Point3::new(
-                                        light.pos.x as f32,
-                                        light.pos.y as f32,
-                                        light.pos.z as f32,
-                                    ),
-                                )
-                                .max(1.0))
-                            .powf(1.1)
-                                * (light_deviance * 0.5 + 0.5) as f32)
-                            .min(1.0);
-                    }
-                }
-            }
-        }
+        //     let light_deviance = self.light_noise.get([
+        //         light.pos.x as f64,
+        //         light.pos.y as f64,
+        //         light.pos.z as f64,
+        //         self.current_tic as f64 * 0.5,
+        //     ]);
+
+        //     for target_point in &self.lighting_sphere {
+        //         let target_point_offset = Point3::new(
+        //             target_point.x + light.pos.x + light_target.x,
+        //             target_point.y + light.pos.y + light_target.y,
+        //             target_point.z + light.pos.z + light_target.z,
+        //         );
+
+        //         let ray_hits =
+        //             hitscan_tile(self.voxel_array.view(), light.pos, target_point_offset);
+
+        //         for hit in ray_hits {
+        //             if is_in_array(self.voxel_array.view(), world_pos_to_index(hit))
+        //                 && world_pos_to_index(hit) != world_pos_to_index(target_point_offset)
+        //             {
+        //                 let hit_index = world_pos_to_index(hit);
+
+        //                 let ray_voxel =
+        //                     &mut self.voxel_array[[hit_index.x, hit_index.y, hit_index.z]];
+
+        //                 ray_voxel.illumination = (ray_voxel.illumination
+        //                     + (light.illumination
+        //                         / euclidean_distance_squared(
+        //                             ray_voxel.pos,
+        //                             Point3::new(
+        //                                 light.pos.x as f32,
+        //                                 light.pos.y as f32,
+        //                                 light.pos.z as f32,
+        //                             ),
+        //                         )
+        //                         .max(1.0))
+        //                     .powf(1.1)
+        //                         * (light_deviance * 0.5 + 0.5) as f32)
+        //                     .min(1.0);
+        //             }
+        //         }
+        //     }
+        // }
 
         self.current_tic += 1;
 
