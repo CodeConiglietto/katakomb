@@ -1,6 +1,6 @@
 use ggez::{
-    graphics::{Image, *},
-    Context,
+    graphics::{spritebatch::SpriteBatch, BlendMode, DrawParam, Drawable, Image, Rect},
+    Context, GameResult,
 };
 
 pub struct KataFont {
@@ -45,4 +45,44 @@ pub fn get_font_offset(index: u16, font: &KataFont) -> Rect {
         float_char_width,
         float_char_height,
     )
+}
+
+pub struct KataFontBatch {
+    font: KataFont,
+    sprite_batch: SpriteBatch,
+}
+
+impl KataFontBatch {
+    pub fn new(font: KataFont) -> Self {
+        Self {
+            sprite_batch: SpriteBatch::new(font.texture.clone()),
+            font,
+        }
+    }
+
+    /*
+    pub fn add<P>(voxel_face: VoxelFace) -> SpriteIdx
+    where
+        P: Into<DrawParam>,
+    {
+    }
+    */
+}
+
+impl Drawable for KataFontBatch {
+    fn draw(&self, ctx: &mut Context, param: DrawParam) -> GameResult {
+        self.sprite_batch.draw(ctx, param)
+    }
+
+    fn dimensions(&self, ctx: &mut Context) -> Option<Rect> {
+        self.sprite_batch.dimensions(ctx)
+    }
+
+    fn set_blend_mode(&mut self, mode: Option<BlendMode>) {
+        self.sprite_batch.set_blend_mode(mode)
+    }
+
+    fn blend_mode(&self) -> Option<BlendMode> {
+        self.sprite_batch.blend_mode()
+    }
 }
