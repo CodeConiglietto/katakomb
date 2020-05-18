@@ -1,88 +1,202 @@
+use failure::Fallible;
 use ggez::{
-    graphics::{spritebatch::SpriteBatch, BlendMode, DrawParam, Drawable, Image, Rect},
+    graphics::{spritebatch::SpriteBatch, BlendMode, DrawParam, Drawable, FilterMode, Image, Rect},
     Context, GameResult,
 };
 
+use crate::rendering::voxel::Voxel2;
+
 pub struct KataFont {
-    pub texture: Image,
+    texture: Image,
     char_width: u8,
     char_height: u8,
 }
 
-pub fn load_font(ctx: &mut Context) -> KataFont {
-    let texture = image::open(r"C:\Users\admin\Documents\katakomb\resources\master8x8.png")
-        .unwrap()
-        .to_rgba();
-
-    KataFont {
-        texture: Image::from_rgba8(
-            ctx,
-            texture.width() as u16,
-            texture.height() as u16,
-            &texture.into_raw(),
-        )
-        .unwrap(),
-        char_width: 8,
-        char_height: 8,
+impl KataFont {
+    pub fn texture(&self) -> &Image {
+        &self.texture
     }
-}
 
-pub fn get_font_offset(index: u16, font: &KataFont) -> Rect {
-    let font_width = font.texture.width();
-    let font_height = font.texture.height();
-    let float_char_width = font.char_width as f32 / font_width as f32;
-    let float_char_height = font.char_height as f32 / font_height as f32;
+    pub fn load(ctx: &mut Context) -> Fallible<Self> {
+        let texture = Image::new(ctx, "/master8x8.png")?;
 
-    let chars_width = 16;
-    // let chars_height = 64;
+        let char_width: u8 = 8;
+        let char_height: u8 = 8;
 
-    let x_index = index % chars_width;
-    let y_index = index / chars_width;
+        assert_eq!(
+            texture.width() % u16::from(char_width),
+            0,
+            "Font width {} is not multiple of char width {}",
+            texture.width(),
+            char_width,
+        );
 
-    Rect::new(
-        x_index as f32 * float_char_width,
-        y_index as f32 * float_char_height,
-        float_char_width,
-        float_char_height,
-    )
+        assert_eq!(
+            texture.height() % u16::from(char_height),
+            0,
+            "Font height {} is not multiple of char height {}",
+            texture.height(),
+            char_height,
+        );
+
+        Ok(Self {
+            texture,
+            char_width,
+            char_height,
+        })
+    }
+
+    pub fn get_src_rect(&self, index: u16) -> Rect {
+        let font_width = self.texture.width();
+        let font_height = self.texture.height();
+        let float_char_width = self.char_width as f32 / font_width as f32;
+        let float_char_height = self.char_height as f32 / font_height as f32;
+
+        let charset_width = self.charset_width();
+
+        let x_index = index % charset_width;
+        let y_index = index / charset_width;
+
+        Rect::new(
+            x_index as f32 * float_char_width,
+            y_index as f32 * float_char_height,
+            float_char_width,
+            float_char_height,
+        )
+    }
+
+    pub fn char_width(&self) -> u8 {
+        self.char_width
+    }
+
+    pub fn char_height(&self) -> u8 {
+        self.char_height
+    }
+
+    pub fn charset_width(&self) -> u16 {
+        self.texture.width() / u16::from(self.char_width)
+    }
+
+    pub fn charset_height(&self) -> u16 {
+        self.texture.height() / u16::from(self.char_height)
+    }
 }
 
 pub struct KataFontBatch {
     font: KataFont,
-    sprite_batch: SpriteBatch,
+    fg_batch: SpriteBatch,
+    bg_batch: SpriteBatch,
+    scaling: f32,
 }
 
 impl KataFontBatch {
-    pub fn new(font: KataFont) -> Self {
+    pub fn new(font: KataFont, white_image: Image, scaling: f32) -> Self {
+        let mut fg_batch = SpriteBatch::new(font.texture.clone());
+        let mut bg_batch = SpriteBatch::new(white_image);
+
+        fg_batch.set_filter(FilterMode::Nearest);
+        bg_batch.set_filter(FilterMode::Nearest);
+
+        fg_batch.set_blend_mode(Some(BlendMode::Alpha));
+        bg_batch.set_blend_mode(Some(BlendMode::Alpha));
+
         Self {
-            sprite_batch: SpriteBatch::new(font.texture.clone()),
+            fg_batch,
+            bg_batch,
             font,
+            scaling,
         }
     }
 
-    /*
-    pub fn add<P>(voxel_face: VoxelFace) -> SpriteIdx
-    where
-        P: Into<DrawParam>,
-    {
+    pub fn set_scaling(&mut self, scaling: f32) {
+        self.scaling = scaling;
     }
-    */
+
+    pub fn scaling(&self) -> f32 {
+        self.scaling
+    }
+
+    pub fn tile_width(&self) -> f32 {
+        self.scaling * self.font.char_width() as f32
+    }
+
+    pub fn tile_height(&self) -> f32 {
+        self.scaling * self.font.char_height() as f32
+    }
+
+    pub fn add<P>(&mut self, voxel: &Voxel2, dest: P)
+    where
+        P: Into<mint::Point2<u32>>,
+    {
+        let mirror_scale = voxel.mirror.into_scale();
+        let dest = dest.into();
+        let dest = mint::Point2::from([
+            dest.x as f32 * self.tile_width(),
+            dest.y as f32 * self.tile_height(),
+        ]);
+
+        let scale =
+            mint::Vector2::from([mirror_scale.x * self.scaling, mirror_scale.y * self.scaling]);
+        let offset = mint::Point2::from([0.0, 0.0]);
+
+        self.fg_batch.add(DrawParam {
+            src: self.font.get_src_rect(voxel.char_offset),
+            dest,
+            rotation: voxel.rotation.into_rotation(),
+            scale,
+            offset,
+            color: voxel.foreground.into(),
+        });
+
+        if let Some(background) = voxel.background {
+            self.bg_batch.add(DrawParam {
+                src: Rect::new(0.0, 0.0, 1.0, 1.0),
+                dest,
+                rotation: voxel.rotation.into_rotation(),
+                scale: mint::Vector2::from([
+                    scale.x * self.font.char_width() as f32,
+                    scale.y * self.font.char_height() as f32,
+                ]),
+                offset,
+                color: background.into(),
+            });
+        }
+    }
+
+    pub fn clear(&mut self) {
+        self.fg_batch.clear();
+        self.bg_batch.clear();
+    }
 }
 
 impl Drawable for KataFontBatch {
     fn draw(&self, ctx: &mut Context, param: DrawParam) -> GameResult {
-        self.sprite_batch.draw(ctx, param)
+        self.bg_batch.draw(ctx, param)?;
+        self.fg_batch.draw(ctx, param)?;
+
+        Ok(())
     }
 
     fn dimensions(&self, ctx: &mut Context) -> Option<Rect> {
-        self.sprite_batch.dimensions(ctx)
+        match (self.fg_batch.dimensions(ctx), self.bg_batch.dimensions(ctx)) {
+            (None, None) => None,
+            (Some(fg_dim), None) => Some(fg_dim),
+            (None, Some(bg_dim)) => Some(bg_dim),
+            (Some(fg_dim), Some(bg_dim)) => Some(fg_dim.combine_with(bg_dim)),
+        }
     }
 
     fn set_blend_mode(&mut self, mode: Option<BlendMode>) {
-        self.sprite_batch.set_blend_mode(mode)
+        self.bg_batch.set_blend_mode(mode);
+        self.fg_batch.set_blend_mode(mode);
     }
 
     fn blend_mode(&self) -> Option<BlendMode> {
-        self.sprite_batch.blend_mode()
+        let fg_mode = self.fg_batch.blend_mode();
+        let bg_mode = self.bg_batch.blend_mode();
+
+        assert_eq!(fg_mode, bg_mode);
+
+        fg_mode
     }
 }

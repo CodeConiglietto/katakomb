@@ -1,16 +1,23 @@
-use ggez::event::{self, EventHandler, KeyCode};
+use std::collections::BTreeSet;
+use std::fs::File;
+use std::io::BufReader;
+use std::time::Duration;
+use std::{cmp::Ordering, env, path::PathBuf};
+
+use failure::Fallible;
 use ggez::{
     // audio::{SoundData, Source, SoundSource},
     conf::WindowMode,
-    graphics,
-    graphics::{spritebatch::SpriteBatch, DrawParam, Image, *},
+    event::{self, EventHandler, KeyCode},
+
+    graphics::{self, spritebatch::SpriteBatch, DrawParam, FilterMode, Image},
     input::{keyboard, mouse},
     timer,
     Context,
     ContextBuilder,
     GameResult,
 };
-
+use log::info;
 use na::{Isometry3, Perspective3, Point2, Point3, Rotation3, Vector3};
 use ndarray::arr2;
 use ndarray::prelude::*;
@@ -18,15 +25,7 @@ use noise::{NoiseFn, OpenSimplex, Seedable};
 use rand::prelude::*;
 use rayon::prelude::*;
 use rodio::Source;
-
-use std::collections::BTreeSet;
-use std::fs::File;
-use std::io::BufReader;
-use std::time::Duration;
-use std::{cmp::Ordering, env, path::PathBuf};
-
-mod editor;
-mod ui;
+use structopt::StructOpt;
 
 use crate::{
     constants::*,
@@ -37,20 +36,60 @@ use crate::{
     world::util::*,
 };
 
-pub mod constants;
-pub mod generation;
-pub mod geometry;
-pub mod rendering;
-pub mod util;
-pub mod world;
+mod constants;
+mod editor;
+mod generation;
+mod geometry;
+mod rendering;
+mod ui;
+mod util;
+mod world;
 
-fn main() {
+#[derive(StructOpt)]
+struct Opts {
+    #[structopt(subcommand)]
+    mode: Option<Mode>,
+}
+
+#[derive(StructOpt)]
+enum Mode {
+    Main,
+    Editor,
+}
+
+impl Default for Mode {
+    fn default() -> Self {
+        Mode::Main
+    }
+}
+
+fn main() -> Fallible<()> {
+    let opts = Opts::from_args();
+
+    fern::Dispatch::new()
+        .format(|out, message, record| {
+            out.finish(format_args!(
+                "{}[{}][{}] {}",
+                chrono::Local::now().format("[%Y-%m-%d][%H:%M:%S%.3f]"),
+                record.target(),
+                record.level(),
+                message
+            ))
+        })
+        .level(log::LevelFilter::Trace)
+        .level_for("gfx_device_gl", log::LevelFilter::Warn)
+        .level_for("winit", log::LevelFilter::Info)
+        .level_for("gilrs", log::LevelFilter::Warn)
+        .level_for("ggez", log::LevelFilter::Info)
+        .chain(std::io::stdout())
+        .apply()?;
+
     let mut cb = ContextBuilder::new("Katakomb", "CodeBunny");
 
     if let Ok(manifest_dir) = env::var("CARGO_MANIFEST_DIR") {
         let mut path = PathBuf::from(manifest_dir);
         path.push("resources");
-        println!("Adding path {:?}", path);
+        info!("Adding cargo resource path: '{:?}'", path);
         cb = cb.add_resource_path(path);
     }
 
@@ -59,19 +98,21 @@ fn main() {
         .build()
         .expect("Could not create ggez context!");
 
-    // Create an instance of your event handler.
-    // Usually, you should provide it with the Context object to
-    // use when setting your game up.
-    let mut my_game = MyGame::new(&mut ctx);
-
-    // Run!
-    match event::run(&mut ctx, &mut event_loop, &mut my_game) {
-        Ok(_) => println!("Exited cleanly."),
-        Err(e) => println!("Error occurred: {}", e),
+    match opts.mode.unwrap_or_default() {
+        Mode::Main => {
+            let mut handler = Katakomb::new(&mut ctx)?;
+            event::run(&mut ctx, &mut event_loop, &mut handler)?;
+        }
+        Mode::Editor => {
+            let mut handler = editor::Editor::new(&mut ctx)?;
+            event::run(&mut ctx, &mut event_loop, &mut handler)?;
+        }
     }
+
+    Ok(())
 }
 
-struct MyGame {
+struct Katakomb {
     blank_texture: Image,
     lighting_sphere: Vec<Point3<f32>>,
     font: KataFont,
@@ -97,20 +138,20 @@ struct MyGame {
     // sound_queue: Vec<(f64, Source)>,
 }
 
-impl MyGame {
-    pub fn new(ctx: &mut Context) -> MyGame {
+impl Katakomb {
+    pub fn new(ctx: &mut Context) -> Fallible<Self> {
         // Load/create resources such as images here.
         let noise = OpenSimplex::new().set_seed(thread_rng().gen::<u32>());
         let meta_noise = OpenSimplex::new().set_seed(thread_rng().gen::<u32>());
 
-        set_default_filter(ctx, FilterMode::Nearest);
+        graphics::set_default_filter(ctx, FilterMode::Nearest);
 
         use crate::rendering::tile::TileType::*;
 
-        MyGame {
-            blank_texture: Image::solid(ctx, 1, WHITE).unwrap(),
+        Ok(Self {
+            blank_texture: Image::solid(ctx, 1, graphics::WHITE).unwrap(),
             lighting_sphere: calculate_sphere_surface(LIGHT_RANGE),
-            font: load_font(ctx),
+            font: KataFont::load(ctx)?,
             tile_array: generate_chunk(Point3::new(0, 0, 0), noise, meta_noise),
             draw_tiles: Vec::new(),
             camera_pos: Point3::new(
@@ -141,7 +182,7 @@ impl MyGame {
             // player_gun_sound: SoundData::new(ctx, r"/gunshot.wav").unwrap(),
             player_ads: 0.0,
             // sound_queue: Vec::new(),
-        }
+        })
     }
 }
 
@@ -307,7 +348,7 @@ fn get_tile_at(pos: Point3<f32>, tile_array: &Array3<Tile>) -> Tile {
     tile_array[[index.x, index.y, index.z]].clone()
 }
 
-impl EventHandler for MyGame {
+impl EventHandler for Katakomb {
     fn update(&mut self, ctx: &mut Context) -> GameResult<()> {
         // Update code here...
 
@@ -726,7 +767,7 @@ impl EventHandler for MyGame {
         // Combine everything.
         let model_view_projection = projection.as_matrix() * mat_model_view;
 
-        let mut sprite_batch = SpriteBatch::new(self.font.texture.clone());
+        let mut sprite_batch = SpriteBatch::new(self.font.texture().clone());
 
         for tile in self.draw_tiles.iter() {
             if let Some(screen_pos) =
@@ -745,11 +786,11 @@ impl EventHandler for MyGame {
 
                     if !tile.tile_type.is_transparent() {
                         sprite_batch.add(DrawParam {
-                            src: get_font_offset(0x2CF, &self.font),
+                            src: self.font.get_src_rect(0x2CF),
                             dest: screen_dest.into(),
                             scale: [(1.0 - screen_pos.z) * 31.4, (1.0 - screen_pos.z) * 31.4]
                                 .into(),
-                            color: Color {
+                            color: graphics::Color {
                                 r: color.r * color_back_darkness,
                                 g: color.g * color_back_darkness,
                                 b: color.b * color_back_darkness,
@@ -764,7 +805,7 @@ impl EventHandler for MyGame {
                         src: tile.tile_type.get_char_offset(&self.font),
                         dest: screen_dest.into(),
                         scale: [(1.0 - screen_pos.z) * 31.4, (1.0 - screen_pos.z) * 31.4].into(),
-                        color: Color {
+                        color: graphics::Color {
                             r: color.r * color_darkness,
                             g: color.g * color_darkness,
                             b: color.b * color_darkness,
@@ -778,7 +819,7 @@ impl EventHandler for MyGame {
         }
         ggez::graphics::draw(ctx, &sprite_batch, DrawParam::default())?;
 
-        let mut weapon_sprite_batch = SpriteBatch::new(self.font.texture.clone());
+        let mut weapon_sprite_batch = SpriteBatch::new(self.font.texture().clone());
 
         rendering::util::draw_player_weapon(
             &mut weapon_sprite_batch,
