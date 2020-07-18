@@ -18,8 +18,8 @@ rayon = "1.3.0"
 rodio = "0.11.0"
 image = "0.23.0"
 mint = "0.5.1"
-na = { version = "0.19.0", package = "nalgebra" }
 serde = { version = "1.0.106", features = ["derive"] }
+na = { version = "0.21.1", package = "nalgebra" }
 internship = "0.6.0"
 flo_binding = "1.1.0"
 failure = { version = "0.1.8", features = ["backtrace"] }
