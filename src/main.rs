@@ -11,19 +11,26 @@ use ggez::{
     GameResult,
 };
 
+use itertools::Itertools;
 use na::{Isometry3, Perspective3, Point2, Point3, Rotation3, Vector3};
 use ndarray::arr2;
 use ndarray::prelude::*;
 use noise::{NoiseFn, OpenSimplex, Seedable};
 use rand::prelude::*;
 use rayon::prelude::*;
-use rodio::Source;
+use rodio::{buffer::SamplesBuffer, source, Sample, Source};
 
-use std::collections::BTreeSet;
-use std::fs::File;
-use std::io::BufReader;
-use std::time::Duration;
-use std::{cmp::Ordering, env, path::PathBuf};
+use std::{
+    cmp::Ordering,
+    collections::BTreeSet,
+    env,
+    fs::File,
+    io::BufReader,
+    iter::{self, Map},
+    path::PathBuf,
+    slice,
+    time::Duration,
+};
 
 mod editor;
 mod ui;
@@ -214,8 +221,7 @@ fn try_ray_hitscan(
             );
 
             if is_in_array(voxel_array, world_pos_to_index(ray_point)) {
-                let ray_voxel =
-                    voxel_array[[ray_int_point.x, ray_int_point.y, ray_int_point.z]].clone();
+                let ray_voxel = &voxel_array[[ray_int_point.x, ray_int_point.y, ray_int_point.z]];
 
                 if !ray_voxel.voxel_type.is_transparent() {
                     return ray_point;
@@ -268,8 +274,11 @@ fn hitscan_tile(
 
 // }
 
-fn get_light_hitscans(light: &Light, lighting_sphere: &Vec<Point3<f32>>, voxel_array: ArrayView3<Voxel>) -> Vec<Point3<f32>>
-{
+fn get_light_hitscans(
+    light: &Light,
+    lighting_sphere: &Vec<Point3<f32>>,
+    voxel_array: ArrayView3<Voxel>,
+) -> Vec<Point3<f32>> {
     let mut ray_hits = Vec::new();
 
     // voxel_array[[
@@ -288,18 +297,95 @@ fn get_light_hitscans(light: &Light, lighting_sphere: &Vec<Point3<f32>>, voxel_a
             target_point.z + light.pos.z + light_target.z,
         );
 
-        ray_hits.append(&mut hitscan_tile(voxel_array, light.pos, target_point_offset));
+        ray_hits.append(&mut hitscan_tile(
+            voxel_array,
+            light.pos,
+            target_point_offset,
+        ));
     }
 
     ray_hits
 }
 
-fn get_voxel_at(pos: Point3<f32>, voxel_array: &Array3<Voxel>) -> Voxel
-{
+fn get_voxel_at(pos: Point3<f32>, voxel_array: &Array3<Voxel>) -> Voxel {
     let index = world_pos_to_index(pos);
 
     voxel_array[[index.x, index.y, index.z]].clone()
 }
+
+/*
+trait IteratorSourceExt: Sized + Source
+where
+    Self::Item: Sample,
+{
+    fn resample<F, U>(self, f: F) -> Box<dyn Source<Item = Self::Item> + Send + Sync>
+    where
+        Self::Item: Send + Sync,
+        F: FnMut(iter::StepBy<slice::Iter<Self::Item>>) -> U,
+        U: ExactSizeIterator,
+        U::Item: Sample;
+}
+
+impl<T> IteratorSourceExt for T
+where
+    T: Sized + Source,
+    T::Item: Sample,
+{
+    fn resample<F, U>(self, mut f: F) -> Box<dyn Source<Item = Self::Item> + Send + Sync>
+    where
+        Self::Item: Send + Sync,
+        F: FnMut(iter::StepBy<slice::Iter<Self::Item>>) -> U,
+        U: ExactSizeIterator,
+        U::Item: Sample,
+    {
+        let mut max_chunk_size = MAX_RESAMPLE_CHUNK_SIZE * self.channels() as usize;
+
+        let mut chunk_size = max_chunk_size;
+        let _self = &mut self;
+        let mut new_frame = true;
+        let mut chunk = Vec::new();
+
+        Box::new(source::from_iter(iter::repeat_with(|| {
+            if new_frame {
+                if let Some(frame_len) = _self.current_frame_len() {
+                    chunk_size = max_chunk_size.min(frame_len * _self.channels() as usize);
+                }
+
+                new_frame = false;
+            } else {
+                if let Some(frame_len) = _self.current_frame_len() {
+                    if frame_len < chunk_size {
+                        new_frame = true;
+                    }
+                }
+            };
+
+            chunk.clear();
+            chunk.extend(_self.take(chunk_size));
+
+            let out: Vec<_> = (0.._self.channels())
+                .map(|channel_idx| {
+                    let out = f(chunk
+                        .iter()
+                        .dropping(channel_idx as usize)
+                        .step_by(_self.channels() as usize));
+                })
+                .interleave()
+                .collect();
+
+            let new_sample_rate = if chunk.len() == out.len() {
+                _self.sample_rate()
+            } else {
+                (_self.sample_rate() as f64 * (out.len() as f64 / chunk.len() as f64)) as u32
+            };
+
+            SamplesBuffer::new(self.channels(), new_sample_rate, chunk)
+        })))
+    }
+}
+
+const MAX_RESAMPLE_CHUNK_SIZE: usize = 1024 * 100;
+*/
 
 impl EventHandler for MyGame {
     fn update(&mut self, ctx: &mut Context) -> GameResult<()> {
@@ -377,19 +463,26 @@ impl EventHandler for MyGame {
 
                 echo_distances.sort_by(|a, b| a.partial_cmp(b).unwrap());
                 let min_echo_distance = echo_distances.first().unwrap();
+                // let med_echo_distance = echo_distances[echo_distances.len() /2 ];
                 let max_echo_distance = echo_distances.last().unwrap();
 
+                //warning: using more than 2 reverbs leads to very unpleasant results :<
                 rodio::play_raw(
                     &device,
                     source
+                        .convert_samples::<i16>()
                         .buffered()
                         .reverb(
-                            Duration::from_millis((min_echo_distance * 1000.0) as u64),
+                            Duration::from_millis((min_echo_distance * 750.0) as u64),
                             0.5 - min_echo_distance * 0.5,
                         )
+                        // .reverb(
+                        //     Duration::from_millis((med_echo_distance * 750.0) as u64),
+                        //     0.5 - med_echo_distance * 0.5,
+                        // )
                         .reverb(
-                            Duration::from_millis((max_echo_distance * 1000.0) as u64),
-                            0.5 - max_echo_distance * 0.5,
+                            Duration::from_millis((max_echo_distance * 750.0) as u64),
+                            0.25 - max_echo_distance * 0.25,
                         )
                         .convert_samples(),
                 );
@@ -469,52 +562,60 @@ impl EventHandler for MyGame {
 
         let voxel_array_view = self.voxel_array.view();
 
-        self.lights = self.lights.par_iter().filter(|light| light.persistent).cloned().collect();
-
-        if is_in_array(self.voxel_array.view(), world_pos_to_index(camera_pos)) {
-                let player_light = Light {
-                    pos: camera_pos,
-                    facing: gun_facing,
-                    illumination: 0.5,
-                    range: 24.0,
-                    persistent: false,
-                };
-    
-                self.lights.push(player_light);
-                // dbg!(&lights);
-    
-                if muzzle_flash {
-                    let muzzle_light = Light {
-                        pos: camera_pos,
-                        facing: gun_facing,
-                        illumination: 0.9,
-                        range: 0.0,
-                        persistent: false,
-                    };
-    
-                    self.lights.push(muzzle_light);
-                }
-            }
-
-        let light_iter = self.lights.par_iter();
-        let mut draw_voxels: Vec<_> = 
-            light_iter
-            .flat_map(|light| get_light_hitscans(light, &self.lighting_sphere, voxel_array_view))
-            .map(|pos| 
-                {
-                    let mut vox = get_voxel_at(pos, &self.voxel_array).clone(); 
-                    vox.illumination = 0.5;//euclidean_distance_squared(vox.pos, light.pos) / (LIGHT_RANGE * LIGHT_RANGE) as f32; 
-                    vox
-                }
-            )
+        self.lights = self
+            .lights
+            .par_iter()
+            .filter(|light| light.persistent)
+            .cloned()
             .collect();
 
-        draw_voxels = draw_voxels.par_iter().filter(|voxel| any_neighbour_empty(&voxel_array.view(), world_pos_to_int(voxel.pos))
-                            && world_pos_to_index(try_ray_hitscan(
-                                voxel_array.view(),
-                                camera_pos,
-                                voxel.pos,
-                            )) == world_pos_to_index(voxel.pos)).cloned().collect();
+        if is_in_array(self.voxel_array.view(), world_pos_to_index(camera_pos)) {
+            let player_light = Light {
+                pos: camera_pos,
+                facing: gun_facing,
+                illumination: 0.5,
+                range: 24.0,
+                persistent: false,
+            };
+
+            self.lights.push(player_light);
+            // dbg!(&lights);
+
+            if muzzle_flash {
+                let muzzle_light = Light {
+                    pos: camera_pos,
+                    facing: gun_facing,
+                    illumination: 0.9,
+                    range: 0.0,
+                    persistent: false,
+                };
+
+                self.lights.push(muzzle_light);
+            }
+        }
+
+        let light_iter = self.lights.par_iter();
+        let mut draw_voxels: Vec<_> = light_iter
+            .flat_map(|light| get_light_hitscans(light, &self.lighting_sphere, voxel_array_view))
+            .map(|pos| {
+                let mut vox = get_voxel_at(pos, &self.voxel_array).clone();
+                vox.illumination = 0.5; //euclidean_distance_squared(vox.pos, light.pos) / (LIGHT_RANGE * LIGHT_RANGE) as f32;
+                vox
+            })
+            .collect();
+
+        draw_voxels = draw_voxels
+            .par_iter()
+            .filter(|voxel| {
+                any_neighbour_empty(&voxel_array.view(), world_pos_to_int(voxel.pos))
+                    && world_pos_to_index(try_ray_hitscan(
+                        voxel_array.view(),
+                        camera_pos,
+                        voxel.pos,
+                    )) == world_pos_to_index(voxel.pos)
+            })
+            .cloned()
+            .collect();
 
         draw_voxels.sort_unstable_by(|a, b| {
             euclidean_distance_squared(b.pos, camera_pos)
@@ -522,13 +623,16 @@ impl EventHandler for MyGame {
                 .unwrap_or(Ordering::Equal)
         });
 
-        draw_voxels.dedup_by(|a, b| 
-            {
-                let equal = world_pos_to_index(a.pos) == world_pos_to_index(b.pos); 
-                if equal {b.illumination = (b.illumination + 0.01).min(1.0)};
-                if b.illumination > 1.0 {panic!()};
-                equal
-            });
+        draw_voxels.dedup_by(|a, b| {
+            let equal = world_pos_to_index(a.pos) == world_pos_to_index(b.pos);
+            if equal {
+                b.illumination = (b.illumination + 0.01).min(1.0)
+            };
+            if b.illumination > 1.0 {
+                panic!()
+            };
+            equal
+        });
 
         std::mem::swap(&mut draw_voxels, &mut self.draw_voxels);
 
@@ -766,7 +870,17 @@ impl EventHandler for MyGame {
 
         let mut weapon_sprite_batch = SpriteBatch::new(self.font.texture.clone());
 
-        rendering::util::draw_player_weapon(&mut weapon_sprite_batch, &self.font, model_view_projection, self.camera_pos, rotation, &self.player_gun_model, self.player_ads, self.player_gun_recoil, self.player_gun_rotation);
+        rendering::util::draw_player_weapon(
+            &mut weapon_sprite_batch,
+            &self.font,
+            model_view_projection,
+            self.camera_pos,
+            rotation,
+            &self.player_gun_model,
+            self.player_ads,
+            self.player_gun_recoil,
+            self.player_gun_rotation,
+        );
 
         ggez::graphics::draw(ctx, &weapon_sprite_batch, DrawParam::default())?;
 

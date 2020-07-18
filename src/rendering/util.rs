@@ -1,24 +1,30 @@
 use na::*;
 use ndarray::prelude::*;
 
-use ggez::{graphics::{Color, DrawParam, spritebatch::SpriteBatch}};
+use ggez::graphics::{spritebatch::SpriteBatch, Color, DrawParam};
 
 use crate::{
     constants::*,
     rendering::{drawable::*, font::*, voxel::*},
 };
 
-pub fn draw_player_weapon(weapon_sprite_batch: &mut SpriteBatch, font: &KataFont, model_view_projection: Matrix4<f32>, camera_pos: Point3<f32>, rotation: Rotation3<f32>, player_gun_model: &Array2<VoxelType>, player_ads: f32, player_gun_recoil: f32, player_gun_rotation: Point2<f32>)
-{
+pub fn draw_player_weapon(
+    weapon_sprite_batch: &mut SpriteBatch,
+    font: &KataFont,
+    model_view_projection: Matrix4<f32>,
+    camera_pos: Point3<f32>,
+    rotation: Rotation3<f32>,
+    player_gun_model: &Array2<VoxelType>,
+    player_ads: f32,
+    player_gun_recoil: f32,
+    player_gun_rotation: Point2<f32>,
+) {
     let player_gun_scale = 0.75;
 
     for x in 0..player_gun_model.dim().1 {
         for y in 0..player_gun_model.dim().0 {
-            let gun_rotation = Rotation3::from_euler_angles(
-                player_gun_rotation.y,
-                player_gun_rotation.x,
-                0.0,
-            );
+            let gun_rotation =
+                Rotation3::from_euler_angles(player_gun_rotation.y, player_gun_rotation.x, 0.0);
 
             let mut voxel_offset =
                 rotation.transform_point(&gun_rotation.transform_point(&Point3::new(
