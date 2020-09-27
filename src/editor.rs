@@ -7,6 +7,7 @@ use std::{
 };
 
 use failure::Fallible;
+use flo_binding::{Binding, Bound, MutableBound};
 use ggez::{
     event::EventHandler,
     graphics::{self, DrawParam, Image},
@@ -24,13 +25,9 @@ use crate::{
     rendering::{
         color::{self, Color},
         font::{KataFont, KataFontBatch},
-        voxel::{Model, Voxel2, Voxel3},
+        voxel::{Model, Voxel2, Voxel3, VoxelFace},
     },
-    ui::{
-        self, BoxConstraints, Element, ElementExt, FlexElement, FlexLayout, KataText,
-        LayoutDirection, List, ListElement, Placeholder, Size, StackedElement, StackedLayout,
-        UiContext,
-    },
+    ui::*,
 };
 
 pub struct Editor {
@@ -90,9 +87,9 @@ impl EventHandler for Editor {
 
         while self.mouse_wheel_scroll >= 1.0 {
             self.mouse_wheel_scroll -= 1.0;
-            let event = ui::Event::Mouse {
+            let event = Event::Mouse {
                 pos: self.ui_context.mouse_pos(ctx),
-                e: ui::MouseEvent::WheelUp,
+                e: MouseEvent::WheelUp,
             };
             let layout_rect = self.layout_rect(ctx);
             let _ = self
@@ -103,9 +100,9 @@ impl EventHandler for Editor {
 
         while self.mouse_wheel_scroll <= -1.0 {
             self.mouse_wheel_scroll += 1.0;
-            let event = ui::Event::Mouse {
+            let event = Event::Mouse {
                 pos: self.ui_context.mouse_pos(ctx),
-                e: ui::MouseEvent::WheelDown,
+                e: MouseEvent::WheelDown,
             };
             let layout_rect = self.layout_rect(ctx);
             let _ = self
@@ -134,9 +131,9 @@ impl EventHandler for Editor {
         let layout_rect = self.layout_rect(ctx);
         let _ = self.mode.layout().handle_event(
             &mut self.ui_context,
-            ui::Event::Mouse {
+            Event::Mouse {
                 pos,
-                e: ui::MouseEvent::ButtonDown { button },
+                e: MouseEvent::ButtonDown { button },
             },
             layout_rect,
         );
@@ -149,9 +146,9 @@ impl EventHandler for Editor {
         let layout_rect = self.layout_rect(ctx);
         let _ = self.mode.layout().handle_event(
             &mut self.ui_context,
-            ui::Event::Mouse {
+            Event::Mouse {
                 pos,
-                e: ui::MouseEvent::ButtonUp { button },
+                e: MouseEvent::ButtonUp { button },
             },
             layout_rect,
         );
@@ -167,9 +164,9 @@ impl EventHandler for Editor {
 
                 let _ = self.mode.layout().handle_event(
                     &mut self.ui_context,
-                    ui::Event::Mouse {
+                    Event::Mouse {
                         pos,
-                        e: ui::MouseEvent::ButtonDrag {
+                        e: MouseEvent::ButtonDrag {
                             button,
                             start_pos: held.start_pos,
                         },
@@ -208,7 +205,7 @@ impl EventHandler for Editor {
         let _ = self
             .mode
             .layout()
-            .handle_event(&mut self.ui_context, ui::Event::Draw, layout_rect);
+            .handle_event(&mut self.ui_context, Event::Draw, layout_rect);
 
         match &mut self.mode {
             EditorMode::Voxel(voxel_mode) => {}
@@ -310,15 +307,17 @@ impl Default for EditorModeName {
 
 struct VoxelMode {
     layout: FlexLayout,
-    current: Arc<Mutex<Option<Voxel3>>>,
 }
 
 impl VoxelMode {
-    fn new(current_voxel: Option<Voxel3>, font: &KataFont) -> Self {
-        let current = Arc::new(Mutex::new(current_voxel));
+    fn new(voxel: Option<Voxel3>, font: &KataFont) -> Self {
+        // Bindings
+        let voxel = Binding::new(voxel.unwrap_or_else(Default::default));
+        let active_face = Binding::new(VoxelFace::X);
 
         let charset_width = font.charset_width();
 
+        // Layout
         let font_display = List::from_vec(
             (0..font.charset_height())
                 .map(|y| {
@@ -328,67 +327,102 @@ impl VoxelMode {
                                 .map(|x| Voxel2::new(y * font.charset_width() + x))
                                 .collect(),
                         )
-                        .with_events(move |_self, _ctx, e, bounds| {
-                            match e.cull(bounds) {
-                                Some(ui::Event::Mouse { pos, e }) => match e {
-                                    ui::MouseEvent::ButtonDown { button } => match button {
-                                        MouseButton::Left => {
-                                            let x = pos.x - bounds.x;
-                                            let char_offset = u32::from(y * charset_width) + x;
+                        .with_events({
+                            let voxel = voxel.clone();
+                            let active_face = active_face.clone();
+                            move |_self, _ctx, e, bounds| {
+                                match e.cull(bounds) {
+                                    Some(Event::Mouse {
+                                        pos,
+                                        e:
+                                            MouseEvent::ButtonDown {
+                                                button: MouseButton::Left,
+                                            },
+                                    }) => {
+                                        let x = pos.x - bounds.x;
+                                        let char_offset = u16::from(y * charset_width) + x as u16;
 
-                                            dbg!(char_offset);
+                                        let mut new_voxel = voxel.get();
+                                        new_voxel[active_face.get()].char_offset = char_offset;
+                                        voxel.set(new_voxel);
 
-                                            return Err(ui::Stop);
-                                        }
-                                        _ => {}
-                                    },
+                                        dbg!(char_offset);
+
+                                        return Err(Stop);
+                                    }
+
                                     _ => {}
-                                },
+                                }
 
-                                _ => {}
+                                Ok(Continue)
                             }
-
-                            Ok(ui::Continue)
                         }),
                     ))
                 })
                 .collect(),
         );
 
-        Self {
-            layout: FlexLayout::from_vec(
-                LayoutDirection::Horizontal,
-                vec![
-                    FlexElement::fixed(Box::new(font_display)),
-                    FlexElement::fixed(divider()),
-                    FlexElement::flex(
-                        Box::new(FlexLayout::from_vec(
-                            LayoutDirection::Vertical,
-                            vec![
-                                FlexElement::flex(placeholder(b'b', color::RED, |c| c.max), 1),
-                                FlexElement::flex(placeholder(b'c', color::GREEN, |c| c.max), 1),
-                            ],
-                        )),
-                        1,
-                    ),
-                    FlexElement::fixed(divider()),
-                    FlexElement::flex(
-                        Box::new(List::from_vec(
-                            (1..=30)
-                                .map(|i| {
-                                    ListElement::new(Box::new(KataText::from_str(&format!(
-                                        "Voxel {}",
-                                        i
-                                    ))))
-                                })
-                                .collect(),
-                        )),
-                        1,
-                    ),
-                ],
-            ),
+        let face_display = |char_offset: u8, face: VoxelFace| {
+            let voxel = voxel.clone();
+            let active_face = active_face.clone();
 
-            current,
+            Box::new(FlexLayout::vertical(vec![
+                FlexElement::fixed(Box::new(Placeholder::new(
+                    Voxel2::new(char_offset.into()),
+                    |c| dbg!(dbg!(c).constrain(Size::new(1, 1))),
+                ))),
+                FlexElement::fixed(Box::new(
+                    VoxelDisplay::new(flo_binding::computed(move || voxel.get()[face].clone()))
+                        .with_events(move |_self, _ctx, e, bounds| {
+                            match e.cull(bounds) {
+                                Some(Event::Mouse {
+                                    e:
+                                        MouseEvent::ButtonDown {
+                                            button: MouseButton::Left,
+                                        },
+                                    ..
+                                }) => active_face.set(face),
+
+                                _ => {}
+                            }
+
+                            Ok(Continue)
+                        }),
+                )),
+            ]))
+        };
+
+        let voxel_info = FlexLayout::vertical(vec![
+            FlexElement::flex(Box::new(Filling::blank()), 1),
+            FlexElement::fixed(Box::new(FlexLayout::horizontal(vec![
+                FlexElement::flex(Box::new(Filling::blank()), 1),
+                FlexElement::fixed(face_display(b'X', VoxelFace::X)),
+                FlexElement::fixed(face_display(b'Y', VoxelFace::Y)),
+                FlexElement::fixed(face_display(b'Z', VoxelFace::Z)),
+                FlexElement::flex(Box::new(Filling::blank()), 1),
+            ]))),
+            FlexElement::flex(Box::new(Filling::blank()), 1),
+        ]);
+
+        let middle_pane = FlexLayout::vertical(vec![
+            FlexElement::flex(Box::new(Centered::new(voxel_info)), 1),
+            FlexElement::flex(placeholder(b'c', color::GREEN, |c| c.max), 1),
+        ]);
+
+        let voxel_list = List::from_vec(
+            (1..=30)
+                .map(|i| ListElement::new(Box::new(KataText::from_str(&format!("Voxel {}", i)))))
+                .collect(),
+        );
+
+        Self {
+            layout: FlexLayout::horizontal(vec![
+                FlexElement::fixed(Box::new(font_display)),
+                FlexElement::fixed(divider()),
+                FlexElement::flex(Box::new(middle_pane), 1),
+                FlexElement::fixed(divider()),
+                FlexElement::flex(Box::new(voxel_list), 1),
+            ]),
         }
     }
 }
