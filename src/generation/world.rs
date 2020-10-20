@@ -1,6 +1,6 @@
 use na::*;
 use ndarray::prelude::*;
-use noise::{NoiseFn, OpenSimplex};
+use noise::{NoiseFn, OpenSimplex, Perlin, Value, Worley};
 use rand::prelude::*;
 
 use crate::{
@@ -9,24 +9,89 @@ use crate::{
     util::*,
 };
 
-pub fn gen_tile(noise: OpenSimplex, meta_noise: OpenSimplex, x: usize, y: usize, z: usize) -> Tile {
-    let noise_value = noise
-        .get([x as f64 * 0.1, y as f64 * 0.025, z as f64 * 0.1])
-        .abs()
-        .powf(2.0)
-        .max(
-            meta_noise
-                .get([x as f64 * 0.05, y as f64 * 0.005, z as f64 * 0.05])
-                .abs(),
-        );
+pub struct ChunkGenPackage {
+    pub simplex: OpenSimplex,
+    pub simplex_weight: Value,
+    pub perlin: Perlin,
+    pub perlin_weight: Value,
+    // pub worley: Worley,
+    // pub worley_weight: Value,
+    pub value: Value,
+    pub value_weight: Value,
+}
+
+pub fn gen_tile(gen_package: &ChunkGenPackage, x: usize, y: usize, z: usize) -> Tile {
+    let simplex_raw = gen_package.simplex.get([
+        x as f64 * NOISE_SCALE,
+        y as f64 * NOISE_SCALE * 0.05,
+        z as f64 * NOISE_SCALE,
+    ]).abs();
+    let simplex_raw_weight = gen_package.simplex_weight.get([
+        x as f64 * NOISE_WEIGHT_SCALE,
+        y as f64 * NOISE_WEIGHT_SCALE,
+        z as f64 * NOISE_WEIGHT_SCALE,
+    ]).abs();
+
+    let perlin_raw = gen_package.perlin.get([
+        x as f64 * NOISE_SCALE,
+        y as f64 * NOISE_SCALE * 0.05,
+        z as f64 * NOISE_SCALE,
+    ]).abs();
+    let perlin_raw_weight = gen_package.perlin_weight.get([
+        x as f64 * NOISE_WEIGHT_SCALE,
+        y as f64 * NOISE_WEIGHT_SCALE,
+        z as f64 * NOISE_WEIGHT_SCALE,
+    ]).abs();
+
+    // let worley_raw = gen_package.worley.get([
+    //     x as f64 * NOISE_SCALE,
+    //     y as f64 * NOISE_SCALE * 0.05,
+    //     z as f64 * NOISE_SCALE,
+    // ]).abs();
+    // let worley_raw_weight = gen_package.worley_weight.get([
+    //     x as f64 * NOISE_WEIGHT_SCALE,
+    //     y as f64 * NOISE_WEIGHT_SCALE,
+    //     z as f64 * NOISE_WEIGHT_SCALE,
+    // ]).abs();
+
+    let value_raw = gen_package.value.get([
+        x as f64 * NOISE_SCALE,
+        y as f64 * NOISE_SCALE * 0.05,
+        z as f64 * NOISE_SCALE,
+    ]).abs();
+    let value_raw_weight = gen_package.value_weight.get([
+        x as f64 * NOISE_WEIGHT_SCALE,
+        y as f64 * NOISE_WEIGHT_SCALE,
+        z as f64 * NOISE_WEIGHT_SCALE,
+    ]).abs();
+
+    let weights_total =
+        simplex_raw_weight + 
+        perlin_raw_weight + 
+        // worley_raw_weight + 
+        value_raw_weight;
+
+    let final_value = (simplex_raw * (simplex_raw_weight / weights_total))
+        + (perlin_raw * (perlin_raw_weight / weights_total))
+        // + (worley_raw * (worley_raw_weight / weights_total))
+        + (value_raw * (value_raw_weight / weights_total));
+    // let noise_value = noise
+    //     .get([x as f64 * 0.25, y as f64 * 0.025, z as f64 * 0.25])
+    //     .abs()
+    //     .powf(2.0)
+    //     .max(
+    //         meta_noise
+    //             .get([x as f64 * 0.05, y as f64 * 0.005, z as f64 * 0.05])
+    //             .abs(),
+    //     );
 
     let cave_threshold =
-        ((y as f64 - (CHUNK_SIZE / 2) as f64).abs() / (CHUNK_SIZE / 2) as f64).max(0.0) + 0.05;
+        ((y as f64 - (CHUNK_SIZE / 2) as f64).abs() / (CHUNK_SIZE / 2) as f64).max(0.0) + 0.1;
 
     Tile {
         pos: Point3::new(x as f32, y as f32, z as f32),
         illumination: 0.5,
-        tile_type: if noise_value > cave_threshold {
+        tile_type: if final_value > cave_threshold {
             TileType::Air
         } else {
             TileType::Rock
@@ -36,11 +101,10 @@ pub fn gen_tile(noise: OpenSimplex, meta_noise: OpenSimplex, x: usize, y: usize,
 
 pub fn generate_chunk(
     offset: Point3<i32>,
-    noise: OpenSimplex,
-    meta_noise: OpenSimplex,
+    gen_package: &ChunkGenPackage,
 ) -> Array3<Tile> {
     let mut chunk = Array3::from_shape_fn((CHUNK_SIZE, CHUNK_SIZE, CHUNK_SIZE), |(x, y, z)| {
-        gen_tile(noise, meta_noise, x, y, z)
+        gen_tile(gen_package, x, y, z)
     });
 
     for x in 0..chunk.dim().0 {

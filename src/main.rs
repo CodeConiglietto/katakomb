@@ -17,7 +17,7 @@ use log::info;
 use na::{Isometry3, Perspective3, Point2, Point3, Rotation3, Vector3};
 use ndarray::arr2;
 use ndarray::prelude::*;
-use noise::{OpenSimplex, Seedable};
+use noise::{OpenSimplex, Perlin, Value, Worley, Seedable};
 use rand::prelude::*;
 use rayon::prelude::*;
 use rodio::Source;
@@ -141,6 +141,17 @@ impl Katakomb {
         let noise = OpenSimplex::new().set_seed(thread_rng().gen::<u32>());
         let meta_noise = OpenSimplex::new().set_seed(thread_rng().gen::<u32>());
 
+        let chunk_gen_package = ChunkGenPackage {
+            simplex: OpenSimplex::new().set_seed(thread_rng().gen::<u32>()),
+            simplex_weight: Value::new().set_seed(thread_rng().gen::<u32>()),
+            perlin: Perlin::new().set_seed(thread_rng().gen::<u32>()),
+            perlin_weight: Value::new().set_seed(thread_rng().gen::<u32>()),
+            // worley: Worley::new().set_seed(thread_rng().gen::<u32>()),
+            // worley_weight: Value::new().set_seed(thread_rng().gen::<u32>()),
+            value: Value::new().set_seed(thread_rng().gen::<u32>()),
+            value_weight: Value::new().set_seed(thread_rng().gen::<u32>()),
+        };
+
         graphics::set_default_filter(ctx, FilterMode::Nearest);
 
         use crate::rendering::tile::TileType::*;
@@ -149,7 +160,7 @@ impl Katakomb {
             blank_texture: Image::solid(ctx, 1, graphics::WHITE).unwrap(),
             lighting_sphere: calculate_sphere_surface(LIGHT_RANGE),
             font: KataFont::load(ctx)?,
-            tile_array: generate_chunk(Point3::new(0, 0, 0), noise, meta_noise),
+            tile_array: generate_chunk(Point3::new(0, 0, 0), &chunk_gen_package),
             draw_tiles: Vec::new(),
             camera_pos: Point3::new(
                 (CHUNK_SIZE / 2) as f32,
@@ -430,7 +441,7 @@ impl EventHandler for Katakomb {
                         .convert_samples::<i16>()
                         .buffered()
                         .reverb(
-                            Duration::from_millis((min_echo_distance * 750.0) as u64),
+                            Duration::from_millis((min_echo_distance * 1000.0) as u64),
                             0.5 - min_echo_distance * 0.5,
                         )
                         // .reverb(
@@ -438,14 +449,14 @@ impl EventHandler for Katakomb {
                         //     0.5 - med_echo_distance * 0.5,
                         // )
                         .reverb(
-                            Duration::from_millis((max_echo_distance * 750.0) as u64),
+                            Duration::from_millis((max_echo_distance * 1250.0) as u64),
                             0.25 - max_echo_distance * 0.25,
                         )
                         .convert_samples(),
                 );
 
                 muzzle_flash = true;
-                self.player_gun_timer = 4;
+                self.player_gun_timer = 6;
             }
         } else {
             self.player_gun_timer -= 1;
@@ -581,11 +592,11 @@ impl EventHandler for Katakomb {
                 .par_iter()
                 .filter(|tile| {
                     any_neighbour_empty(&tile_array.view(), world_pos_to_int(tile.pos))
-                        && world_pos_to_index(try_ray_hitscan(
+                        && (nuke_lighting || world_pos_to_index(try_ray_hitscan(
                             tile_array.view(),
                             camera_pos,
                             tile.pos,
-                        )) == world_pos_to_index(tile.pos)
+                        )) == world_pos_to_index(tile.pos))
                 })
                 .cloned()
                 .collect();
