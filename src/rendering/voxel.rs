@@ -1,4 +1,7 @@
-use std::f32::consts::PI;
+use std::{
+    f32::consts::PI,
+    ops::{Index, IndexMut},
+};
 
 use internship::IStr;
 use ndarray::Array3;
@@ -6,11 +9,54 @@ use serde::{Deserialize, Serialize};
 
 use crate::rendering::color::{self, Color};
 
-#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
 pub struct Voxel3 {
     pub x: Voxel2,
     pub y: Voxel2,
     pub z: Voxel2,
+}
+
+impl Voxel3 {
+    pub fn new(x: Voxel2, y: Voxel2, z: Voxel2) -> Self {
+        Self { x, y, z }
+    }
+
+    pub fn face(&self, face: VoxelFace) -> &Voxel2 {
+        match face {
+            VoxelFace::X => &self.x,
+            VoxelFace::Y => &self.y,
+            VoxelFace::Z => &self.z,
+        }
+    }
+
+    pub fn face_mut(&mut self, face: VoxelFace) -> &mut Voxel2 {
+        match face {
+            VoxelFace::X => &mut self.x,
+            VoxelFace::Y => &mut self.y,
+            VoxelFace::Z => &mut self.z,
+        }
+    }
+}
+
+impl Index<VoxelFace> for Voxel3 {
+    type Output = Voxel2;
+
+    fn index(&self, face: VoxelFace) -> &Voxel2 {
+        self.face(face)
+    }
+}
+
+impl IndexMut<VoxelFace> for Voxel3 {
+    fn index_mut(&mut self, face: VoxelFace) -> &mut Voxel2 {
+        self.face_mut(face)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
+pub enum VoxelFace {
+    X,
+    Y,
+    Z,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
@@ -47,6 +93,12 @@ impl Voxel2 {
 
     pub fn mirror(self, mirror: VoxelMirror) -> Self {
         Self { mirror, ..self }
+    }
+}
+
+impl Default for Voxel2 {
+    fn default() -> Self {
+        Self::new(0)
     }
 }
 

@@ -38,7 +38,7 @@ mod editor;
 mod generation;
 mod geometry;
 mod rendering;
-mod ui;
+pub mod ui;
 mod util;
 mod world;
 

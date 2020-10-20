@@ -61,6 +61,26 @@ impl Size {
         it[direction] = new_size;
         it
     }
+
+    pub fn min(self, rhs: Self) -> Self {
+        Self {
+            width: self.width.min(rhs.width),
+            height: self.height.min(rhs.height),
+        }
+    }
+
+    pub fn max(self, rhs: Self) -> Self {
+        Self {
+            width: self.width.max(rhs.width),
+            height: self.height.max(rhs.height),
+        }
+    }
+}
+
+impl Default for Size {
+    fn default() -> Self {
+        Self::ZERO
+    }
 }
 
 pub trait PointExt {
@@ -119,6 +139,10 @@ impl BoxConstraints {
             min: Size::new(self.min.width, u32::max_value()),
             max: Size::new(self.max.width, u32::max_value()),
         }
+    }
+
+    pub fn constrain(&self, size: Size) -> Size {
+        size.min(self.max).max(self.min)
     }
 }
 
@@ -454,6 +478,47 @@ impl<T: Element> Padding<T> {
     }
 }
 
+pub struct Centered<T> {
+    inner: T,
+    inner_size: Option<Size>,
+}
+
+impl<T: Element> Centered<T> {
+    pub fn new(inner: T) -> Self {
+        Self {
+            inner,
+            inner_size: None,
+        }
+    }
+}
+
+impl<T: Element> Element for Centered<T> {
+    fn layout(&mut self, constraints: BoxConstraints) -> Size {
+        trace!("Centered relayout");
+
+        self.inner_size = dbg!(Some(
+            self.inner
+                .layout(BoxConstraints::new(Size::new(0, 0), constraints.max))
+        ));
+        constraints.max
+    }
+
+    fn handle_event(&mut self, ctx: &mut UiContext, event: Event, bounds: IRect) -> EventResult {
+        let inner_size = self.inner_size.unwrap();
+
+        self.inner.handle_event(
+            ctx,
+            event,
+            IRect::new(
+                bounds.x + (bounds.w - inner_size.width) / 2,
+                bounds.y + (bounds.h - inner_size.height) / 2,
+                inner_size.width,
+                inner_size.height,
+            ),
+        )
+    }
+}
+
 pub struct ScrollBar {
     pub scroll_pos: Binding<u32>,
     pub scroll_max: Binding<u32>,
@@ -672,15 +737,19 @@ impl Element for KataText {
 
         let n = self.voxels.len() as u32;
 
-        Size::new(
-            n.min(constraints.max.width).max(constraints.min.width),
-            n / constraints.max.width + if n % constraints.max.width > 0 { 1 } else { 0 },
-        )
+        if constraints.max.width == 0 {
+            Size::new(0, 0)
+        } else {
+            Size::new(
+                n.min(constraints.max.width).max(constraints.min.width),
+                n / constraints.max.width + if n % constraints.max.width > 0 { 1 } else { 0 },
+            )
+        }
     }
 
     fn handle_event(&mut self, ctx: &mut UiContext, event: Event, bounds: IRect) -> EventResult {
         match event {
-            Event::Draw => {
+            Event::Draw if bounds.w > 0 => {
                 for (i, voxel) in self.voxels.iter().enumerate() {
                     ctx.batch.add(
                         voxel,
@@ -705,7 +774,7 @@ pub struct StackedLayout {
 }
 
 impl StackedLayout {
-    pub fn new(direction: LayoutDirection) -> Self {
+    pub fn empty(direction: LayoutDirection) -> Self {
         Self::from_vec(direction, Vec::new())
     }
 
@@ -715,6 +784,14 @@ impl StackedLayout {
             direction,
             dividers: false,
         }
+    }
+
+    pub fn horizontal(elements: Vec<StackedElement>) -> Self {
+        Self::from_vec(LayoutDirection::Horizontal, elements)
+    }
+
+    pub fn vertical(elements: Vec<StackedElement>) -> Self {
+        Self::from_vec(LayoutDirection::Vertical, elements)
     }
 
     pub fn with_dividers(self) -> Self {
@@ -889,7 +966,7 @@ pub struct FlexLayout {
 }
 
 impl FlexLayout {
-    pub fn new(direction: LayoutDirection) -> Self {
+    pub fn empty(direction: LayoutDirection) -> Self {
         Self::from_vec(direction, Vec::new())
     }
 
@@ -899,6 +976,14 @@ impl FlexLayout {
             direction,
         }
     }
+
+    pub fn horizontal(elements: Vec<FlexElement>) -> Self {
+        Self::from_vec(LayoutDirection::Horizontal, elements)
+    }
+
+    pub fn vertical(elements: Vec<FlexElement>) -> Self {
+        Self::from_vec(LayoutDirection::Vertical, elements)
+    }
 }
 
 impl Element for FlexLayout {
@@ -906,13 +991,18 @@ impl Element for FlexLayout {
         trace!("FlexLayout relayout");
 
         let mut free = constraints.max;
+        let mut max_other = 0;
 
         for fixed_element in self.elements.iter_mut().filter(|e| e.flex == 0) {
             let element_size = fixed_element
                 .element
-                .layout(BoxConstraints::new(Size::ZERO, free))[self.direction];
-            free = free.shrink(Size::ZERO.with_dir(self.direction, element_size));
-            fixed_element.size = Some(element_size);
+                .layout(dbg!(BoxConstraints::new(Size::ZERO, free)));
+
+            free = dbg!(
+                free.shrink(Size::ZERO.with_dir(self.direction, element_size[self.direction]))
+            );
+            fixed_element.size = Some(element_size[self.direction]);
+            max_other = max_other.max(element_size[self.direction.other()]);
         }
 
         let total_flex: u32 = self.elements.iter().map(|e| e.flex).sum();
@@ -934,11 +1024,12 @@ impl Element for FlexLayout {
         if total_flex > 0 {
             constraints.max
         } else {
-            constraints.max.with_dir(
+            Size::default().with_dir(
                 self.direction,
                 constraints.max.dir(self.direction) - free.dir(self.direction),
             )
         }
+        .with_dir(self.direction.other(), max_other)
     }
 
     fn handle_event(&mut self, ctx: &mut UiContext, event: Event, bounds: IRect) -> EventResult {
@@ -995,17 +1086,17 @@ impl FlexElement {
     }
 }
 
-pub struct VoxelDisplay {
-    pub voxel: Binding<Voxel2>,
+pub struct VoxelDisplay<B> {
+    pub voxel: B,
 }
 
-impl VoxelDisplay {
-    pub fn new(voxel: Binding<Voxel2>) -> Self {
+impl<B: Bound<Voxel2>> VoxelDisplay<B> {
+    pub fn new(voxel: B) -> Self {
         Self { voxel }
     }
 }
 
-impl Element for VoxelDisplay {
+impl<B: Bound<Voxel2>> Element for VoxelDisplay<B> {
     fn layout(&mut self, constraints: BoxConstraints) -> Size {
         Size::new(constraints.min.width.max(1), constraints.min.height.max(1))
     }
@@ -1052,6 +1143,30 @@ where
             _ => {}
         }
 
+        Ok(Continue)
+    }
+}
+
+pub struct Filling {
+    voxel: Voxel2,
+}
+
+impl Filling {
+    pub fn new(voxel: Voxel2) -> Self {
+        Self { voxel }
+    }
+
+    pub fn blank() -> Self {
+        Self::new(Voxel2::default())
+    }
+}
+
+impl Element for Filling {
+    fn layout(&mut self, constraints: BoxConstraints) -> Size {
+        constraints.max
+    }
+
+    fn handle_event(&mut self, ctx: &mut UiContext, event: Event, bounds: IRect) -> EventResult {
         Ok(Continue)
     }
 }
