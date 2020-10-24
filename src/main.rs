@@ -456,7 +456,7 @@ impl EventHandler for Katakomb {
                 );
 
                 muzzle_flash = true;
-                self.player_gun_timer = 6;
+                self.player_gun_timer = 12;
             }
         } else {
             self.player_gun_timer -= 1;
@@ -494,16 +494,16 @@ impl EventHandler for Katakomb {
         self.camera_pos = self.camera_pos + movement_offset.coords;
 
         if keyboard::is_key_pressed(ctx, KeyCode::Left) {
-            self.camera_rotation.x += 0.1;
+            self.camera_rotation.x += 0.05;
         }
         if keyboard::is_key_pressed(ctx, KeyCode::Right) {
-            self.camera_rotation.x -= 0.1;
+            self.camera_rotation.x -= 0.05;
         }
         if keyboard::is_key_pressed(ctx, KeyCode::Up) {
-            self.camera_rotation.y -= 0.1;
+            self.camera_rotation.y -= 0.05;
         }
         if keyboard::is_key_pressed(ctx, KeyCode::Down) {
-            self.camera_rotation.y += 0.1;
+            self.camera_rotation.y += 0.05;
         }
 
         if keyboard::is_key_pressed(ctx, KeyCode::N) {
@@ -542,7 +542,7 @@ impl EventHandler for Katakomb {
                 pos: camera_pos,
                 facing: gun_facing,
                 illumination: 0.5,
-                range: 24.0,
+                range: 16.0,
                 persistent: false,
             };
 

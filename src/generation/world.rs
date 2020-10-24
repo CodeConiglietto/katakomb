@@ -23,7 +23,7 @@ pub struct ChunkGenPackage {
 pub fn gen_tile(gen_package: &ChunkGenPackage, x: usize, y: usize, z: usize) -> Tile {
     let simplex_raw = gen_package.simplex.get([
         x as f64 * NOISE_SCALE,
-        y as f64 * NOISE_SCALE * 0.05,
+        y as f64 * NOISE_SCALE,// * 0.05,
         z as f64 * NOISE_SCALE,
     ]).abs();
     let simplex_raw_weight = gen_package.simplex_weight.get([
@@ -34,7 +34,7 @@ pub fn gen_tile(gen_package: &ChunkGenPackage, x: usize, y: usize, z: usize) -> 
 
     let perlin_raw = gen_package.perlin.get([
         x as f64 * NOISE_SCALE,
-        y as f64 * NOISE_SCALE * 0.05,
+        y as f64 * NOISE_SCALE,// * 0.05,
         z as f64 * NOISE_SCALE,
     ]).abs();
     let perlin_raw_weight = gen_package.perlin_weight.get([
@@ -56,7 +56,7 @@ pub fn gen_tile(gen_package: &ChunkGenPackage, x: usize, y: usize, z: usize) -> 
 
     let value_raw = gen_package.value.get([
         x as f64 * NOISE_SCALE,
-        y as f64 * NOISE_SCALE * 0.05,
+        y as f64 * NOISE_SCALE,// * 0.05,
         z as f64 * NOISE_SCALE,
     ]).abs();
     let value_raw_weight = gen_package.value_weight.get([
@@ -86,7 +86,7 @@ pub fn gen_tile(gen_package: &ChunkGenPackage, x: usize, y: usize, z: usize) -> 
     //     );
 
     let cave_threshold =
-        ((y as f64 - (CHUNK_SIZE / 2) as f64).abs() / (CHUNK_SIZE / 2) as f64).max(0.0) + 0.1;
+        ((y as f64 - (CHUNK_SIZE / 2) as f64).abs() / (CHUNK_SIZE / 2) as f64).max(0.0) + 0.15;
 
     Tile {
         pos: Point3::new(x as f32, y as f32, z as f32),
