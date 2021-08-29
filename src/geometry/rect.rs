@@ -1,6 +1,6 @@
-use std::ops::{Index, IndexMut, Range};
+use std::ops::{Range};
 
-pub use ggez::graphics::Rect as FRect;
+pub use ggez::{graphics::Rect as FRect, mint};
 
 use crate::ui::{LayoutDirection, Size};
 

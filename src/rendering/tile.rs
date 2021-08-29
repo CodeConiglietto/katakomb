@@ -1,13 +1,21 @@
+use ggez::nalgebra as na;
 use na::*;
 
 use crate::rendering::{drawable::*, font::*};
 
 use ggez::graphics::{Color, Rect};
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub enum TileType {
     Air,
-    Rock,
+    Rock0,
+    Rock1,
+    Rock2,
+    Rock3,
+    Rock4,
+    Rock5,
+    Rock6,
+    Rock7,
     Mushroom,
     Candle,
     FrontSight,
@@ -29,7 +37,14 @@ impl Drawable for TileType {
     fn get_char_offset(&self, font: &KataFont) -> Rect {
         match self {
             TileType::Air => font.get_src_rect(0),
-            TileType::Rock => font.get_src_rect(0xB1),
+            TileType::Rock0 => font.get_src_rect(0x2B0),
+            TileType::Rock1 => font.get_src_rect(0x2B1),
+            TileType::Rock2 => font.get_src_rect(0x2B2),
+            TileType::Rock3 => font.get_src_rect(0x2B3),
+            TileType::Rock4 => font.get_src_rect(0x2B4),
+            TileType::Rock5 => font.get_src_rect(0x2B5),
+            TileType::Rock6 => font.get_src_rect(0x2B6),
+            TileType::Rock7 => font.get_src_rect(0x2B7),
             TileType::Mushroom => font.get_src_rect(0x2E1),
             TileType::Candle => font.get_src_rect(0x21A),
             TileType::FrontSight => font.get_src_rect(0x211),
@@ -50,7 +65,7 @@ impl Drawable for TileType {
     fn get_color(&self) -> Color {
         match self {
             TileType::Air => Color::new(0.0, 0.0, 0.0, 0.0),
-            TileType::Rock => Color::new(0.5, 0.5, 0.5, 1.0),
+            TileType::Rock0 | TileType::Rock1 | TileType::Rock2 | TileType::Rock3 | TileType::Rock4 | TileType::Rock5 | TileType::Rock6 | TileType::Rock7 => Color::new(0.5, 0.5, 0.5, 1.0),
             TileType::Mushroom => Color::new(0.75, 0.0, 0.75, 1.0),
             TileType::Candle => Color::new(0.9, 0.9, 0.0, 1.0),
             TileType::StockUpper => Color::new(0.75, 0.5, 0.25, 1.0),
@@ -61,7 +76,7 @@ impl Drawable for TileType {
     fn is_transparent(&self) -> bool {
         match self {
             TileType::Air => true,
-            TileType::Rock => false,
+            TileType::Rock0 | TileType::Rock1 | TileType::Rock2 | TileType::Rock3 | TileType::Rock4 | TileType::Rock5 | TileType::Rock6 | TileType::Rock7 => false,
             TileType::Mushroom => true,
             TileType::Candle => true,
             TileType::FrontSight => true,

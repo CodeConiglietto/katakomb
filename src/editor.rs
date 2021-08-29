@@ -12,7 +12,7 @@ use ggez::{
     event::EventHandler,
     graphics::{self, DrawParam, Image},
     input::mouse::MouseButton,
-    Context, GameResult,
+    Context, GameResult, mint, nalgebra as na
 };
 use internship::IStr;
 use log::debug;

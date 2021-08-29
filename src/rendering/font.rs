@@ -1,7 +1,7 @@
 use failure::Fallible;
 use ggez::{
     graphics::{spritebatch::SpriteBatch, BlendMode, DrawParam, Drawable, FilterMode, Image, Rect},
-    Context, GameResult,
+    Context, GameResult, mint,
 };
 
 use crate::rendering::voxel::Voxel2;

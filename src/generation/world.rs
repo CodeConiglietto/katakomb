@@ -1,6 +1,7 @@
+use ggez::nalgebra as na;
 use na::*;
 use ndarray::prelude::*;
-use noise::{NoiseFn, OpenSimplex, Perlin, Value, Worley};
+use noise::{NoiseFn, OpenSimplex, Perlin, Value};
 use rand::prelude::*;
 
 use crate::{
@@ -94,7 +95,23 @@ pub fn gen_tile(gen_package: &ChunkGenPackage, x: usize, y: usize, z: usize) -> 
         tile_type: if final_value > cave_threshold {
             TileType::Air
         } else {
-            TileType::Rock
+            //YO SO LIKE FUCKING DO SOMETHING BETTER CUNT
+            //MAKE IT NOISE INSTEAD
+            let dist_weights = [1, 2, 4, 8, 8, 4, 2, 1];
+            let dist = rand::distributions::weighted::WeightedIndex::new(&dist_weights).unwrap();
+
+            match dist.sample(& mut thread_rng())
+            {
+                0 => TileType::Rock0,
+                1 => TileType::Rock1,
+                2 => TileType::Rock2,
+                3 => TileType::Rock3,
+                4 => TileType::Rock4,
+                5 => TileType::Rock5,
+                6 => TileType::Rock6,
+                7 => TileType::Rock7,
+                _ => panic!(),
+            }
         },
     }
 }
@@ -116,12 +133,22 @@ pub fn generate_chunk(
                     && is_in_array(chunk.view(), pos)
                     && is_in_array(chunk.view(), pos_under)
                     && chunk[[x, y, z]].tile_type == TileType::Air
-                    && chunk[[x, y - 1, z]].tile_type == TileType::Rock
                 {
-                    chunk[[x, y, z]] = Tile {
-                        pos: Point3::new(x as f32, y as f32, z as f32),
-                        illumination: 0.5,
-                        tile_type: TileType::Candle,
+                    let type_under = chunk[[x, y - 1, z]].tile_type;
+                    if type_under == TileType::Rock0 
+                    || type_under == TileType::Rock1 
+                    || type_under == TileType::Rock2 
+                    || type_under == TileType::Rock3 
+                    || type_under == TileType::Rock4 
+                    || type_under == TileType::Rock5 
+                    || type_under == TileType::Rock6 
+                    || type_under == TileType::Rock7
+                    {
+                        chunk[[x, y, z]] = Tile {
+                            pos: Point3::new(x as f32, y as f32, z as f32),
+                            illumination: 0.5,
+                            tile_type: TileType::Candle,
+                        }
                     }
                 }
             }

@@ -5,7 +5,6 @@ use ggez::{
     // audio::{SoundData, Source, SoundSource},
     conf::WindowMode,
     event::{self, EventHandler, KeyCode},
-
     graphics::{self, spritebatch::SpriteBatch, DrawParam, FilterMode, Image},
     input::{keyboard, mouse},
     timer,
@@ -14,20 +13,24 @@ use ggez::{
     GameResult,
 };
 use log::info;
+use ggez::nalgebra as na;
 use na::{Isometry3, Perspective3, Point2, Point3, Rotation3, Vector3};
 use ndarray::arr2;
 use ndarray::prelude::*;
-use noise::{OpenSimplex, Perlin, Value, Worley, Seedable};
+use noise::{OpenSimplex, Perlin, Value, Seedable};
 use rand::prelude::*;
 use rayon::prelude::*;
 use rodio::Source;
 use structopt::StructOpt;
+use specs::prelude::*;
 
 use crate::{
     constants::*,
+    components::{velocity::*, position::*},
     generation::world::*,
     geometry::util::*,
     rendering::{drawable::Drawable, font::*, light::*, tile::*},
+    systems::{physics_system::*},
     util::*,
     world::util::*,
 };
@@ -35,9 +38,11 @@ use crate::{
 mod audio;
 mod constants;
 mod editor;
+mod components;
 mod generation;
 mod geometry;
 mod rendering;
+mod systems;
 pub mod ui;
 mod util;
 mod world;
@@ -124,7 +129,10 @@ struct Katakomb {
     current_tic: u64,
 
     lights: Vec<Light>,
-    light_noise: OpenSimplex,
+    // light_noise: OpenSimplex,
+
+    ecs_world: World,
+    physics_system: PhysicsSystem,
 
     player_gun_model: Array2<TileType>,
     player_gun_timer: u8,
@@ -138,8 +146,8 @@ struct Katakomb {
 impl Katakomb {
     pub fn new(ctx: &mut Context) -> Fallible<Self> {
         // Load/create resources such as images here.
-        let noise = OpenSimplex::new().set_seed(thread_rng().gen::<u32>());
-        let meta_noise = OpenSimplex::new().set_seed(thread_rng().gen::<u32>());
+        // let noise = OpenSimplex::new().set_seed(thread_rng().gen::<u32>());
+        // let meta_noise = OpenSimplex::new().set_seed(thread_rng().gen::<u32>());
 
         let chunk_gen_package = ChunkGenPackage {
             simplex: OpenSimplex::new().set_seed(thread_rng().gen::<u32>()),
@@ -156,6 +164,14 @@ impl Katakomb {
 
         use crate::rendering::tile::TileType::*;
 
+        let mut ecs_world = World::new();
+        ecs_world.register::<PositionComponent>();
+        ecs_world.register::<VelocityComponent>();
+
+        let mut physics_system = PhysicsSystem;
+
+        let player = ecs_world.create_entity().with(PositionComponent{value: Point3::origin()}).with(VelocityComponent{value: Vector3::new(0.0, 0.1, 0.0)}).build();
+
         Ok(Self {
             blank_texture: Image::solid(ctx, 1, graphics::WHITE).unwrap(),
             lighting_sphere: calculate_sphere_surface(LIGHT_RANGE),
@@ -171,7 +187,9 @@ impl Katakomb {
             nuke_lighting: false,
             current_tic: 0,
             lights: Vec::new(),
-            light_noise: OpenSimplex::new(),
+            // light_noise: OpenSimplex::new(),
+            ecs_world,
+            physics_system,
             player_gun_recoil: 0.0,
             player_gun_rotation: Point2::origin(),
             player_gun_model: arr2(&[
@@ -194,170 +212,20 @@ impl Katakomb {
     }
 }
 
-//Tries to fire a bresenham hitscan, returns dest if no collisions
-fn try_bresenham_hitscan(
-    tile_array: ArrayView3<Tile>,
-    src: Point3<i32>,
-    dest: Point3<i32>,
-) -> Point3<i32> {
-    if src.x >= 0
-        && src.x < CHUNK_SIZE as i32
-        && src.y >= 0
-        && src.y < CHUNK_SIZE as i32
-        && src.z >= 0
-        && src.z < CHUNK_SIZE as i32
-    {
-        for ray_point in calculate_bresenham(src, dest) {
-            let ray_tile = tile_array[[
-                ray_point.x as usize,
-                ray_point.y as usize,
-                ray_point.z as usize,
-            ]]
-            .clone();
-
-            if ray_point.x >= 0
-                && ray_point.x < CHUNK_SIZE as i32
-                && ray_point.y >= 0
-                && ray_point.y < CHUNK_SIZE as i32
-                && ray_point.z >= 0
-                && ray_point.z < CHUNK_SIZE as i32
-            {
-                if !ray_tile.tile_type.is_transparent() {
-                    return ray_point;
-                }
-            }
-        }
-    } else {
-        return src;
-    }
-
-    return dest;
-}
-
-//Tries to fire a floating point hitscan, returns dest if no collisions
-//This assumes that whatever is being scanned against is in an evenly spaced grid of tile size 1*1*1
-fn try_ray_hitscan(
-    tile_array: ArrayView3<Tile>,
-    src: Point3<f32>,
-    dest: Point3<f32>,
-) -> Point3<f32> {
-    if is_in_array(tile_array, world_pos_to_index(src)) {
-        let distance = euclidean_distance_squared(src, dest).sqrt();
-        let distance_ratios = Point3::new(
-            (dest.x - src.x) / distance,
-            (dest.y - src.y) / distance,
-            (dest.z - src.z) / distance,
-        );
-
-        let mut ray_point = src.clone();
-
-        ray_point.x += distance_ratios.x;
-        ray_point.y += distance_ratios.y;
-        ray_point.z += distance_ratios.z;
-
-        for _i in 0..distance.floor() as i32 - 1 {
-            let ray_int_point = Point3::new(
-                ray_point.x as usize,
-                ray_point.y as usize,
-                ray_point.z as usize,
-            );
-
-            if is_in_array(tile_array, world_pos_to_index(ray_point)) {
-                let ray_tile = &tile_array[[ray_int_point.x, ray_int_point.y, ray_int_point.z]];
-
-                if !ray_tile.tile_type.is_transparent() {
-                    return ray_point;
-                }
-            }
-
-            ray_point.x += distance_ratios.x;
-            ray_point.y += distance_ratios.y;
-            ray_point.z += distance_ratios.z;
-        }
-    } else {
-        return src;
-    }
-
-    return dest;
-}
-
-fn get_cube_points(pos: Point3<f32>) -> Vec<Point3<f32>> {
-    vec![
-        Point3::new(pos.x - 0.0, pos.y - 0.0, pos.z - 0.0),
-        Point3::new(pos.x - 0.0, pos.y - 0.0, pos.z + 0.9),
-        Point3::new(pos.x - 0.0, pos.y + 0.9, pos.z - 0.0),
-        Point3::new(pos.x - 0.0, pos.y + 0.9, pos.z + 0.9),
-        Point3::new(pos.x + 0.9, pos.y - 0.0, pos.z - 0.0),
-        Point3::new(pos.x + 0.9, pos.y - 0.0, pos.z + 0.9),
-        Point3::new(pos.x + 0.9, pos.y + 0.9, pos.z - 0.0),
-        Point3::new(pos.x + 0.9, pos.y + 0.9, pos.z + 0.9),
-    ]
-}
-
-fn hitscan_tile(
-    tile_array: ArrayView3<Tile>,
-    src: Point3<f32>,
-    dest: Point3<f32>,
-) -> Vec<Point3<f32>> {
-    let mut hits = Vec::new();
-
-    for target in get_cube_points(dest) {
-        let hit = try_ray_hitscan(tile_array, src, target);
-
-        if world_pos_to_index(hit) != world_pos_to_index(target) {
-            hits.push(hit);
-        }
-    }
-
-    hits
-}
-
-// fn get_tile_from_point(tile_array: ArrayView3<Tile>, pos: Point3::<f32>) -> Tile{
-
-// }
-
-fn get_light_hitscans(
-    light: &Light,
-    lighting_sphere: &Vec<Point3<f32>>,
-    tile_array: ArrayView3<Tile>,
-) -> Vec<Point3<f32>> {
-    let mut ray_hits = Vec::new();
-
-    // tile_array[[
-    //         light.pos.x.floor() as usize,
-    //         light.pos.y.floor() as usize,
-    //         light.pos.z.floor() as usize,
-    //     ]]
-    //     .illumination = 0.9;
-
-    let light_target: Point3<f32> = Point3::origin() + (light.facing * light.range).coords;
-
-    for target_point in lighting_sphere {
-        let target_point_offset = Point3::new(
-            target_point.x + light.pos.x + light_target.x,
-            target_point.y + light.pos.y + light_target.y,
-            target_point.z + light.pos.z + light_target.z,
-        );
-
-        ray_hits.append(&mut hitscan_tile(
-            tile_array,
-            light.pos,
-            target_point_offset,
-        ));
-    }
-
-    ray_hits
-}
-
-fn get_tile_at(pos: Point3<f32>, tile_array: &Array3<Tile>) -> Tile {
-    let index = world_pos_to_index(pos);
-
-    tile_array[[index.x, index.y, index.z]].clone()
-}
-
 impl EventHandler for Katakomb {
     fn update(&mut self, ctx: &mut Context) -> GameResult<()> {
         // Update code here...
+        self.physics_system.run_now(&self.ecs_world);
+        self.ecs_world.maintain();
+
+        let screen_center: Point2<f32> = [
+            WINDOW_WIDTH / 2.0,
+            WINDOW_HEIGHT / 2.0, //We need to negate this, as 2d screen space is inverse of normalised device coords
+        ].into();
+
+        let mouse_delta: Point2<f32> = (screen_center - Point2::<f32>::from(mouse::position(ctx))).into();
+
+        mouse::set_position(ctx, screen_center).unwrap();
 
         let mut muzzle_flash = false;
 
@@ -384,7 +252,7 @@ impl EventHandler for Katakomb {
 
         if self.player_gun_timer == 0 {
             if mouse::button_pressed(ctx, mouse::MouseButton::Left) {
-                self.player_gun_recoil = (self.player_gun_recoil + 0.2).min(1.0);
+                self.player_gun_recoil = (self.player_gun_recoil + 0.5).min(1.0);
                 self.player_gun_rotation.x = (self.player_gun_rotation.x
                     + (thread_rng().gen::<f32>() - 0.5) * 0.05)
                     .min(1.0)
@@ -493,18 +361,21 @@ impl EventHandler for Katakomb {
 
         self.camera_pos = self.camera_pos + movement_offset.coords;
 
-        if keyboard::is_key_pressed(ctx, KeyCode::Left) {
-            self.camera_rotation.x += 0.05;
-        }
-        if keyboard::is_key_pressed(ctx, KeyCode::Right) {
-            self.camera_rotation.x -= 0.05;
-        }
-        if keyboard::is_key_pressed(ctx, KeyCode::Up) {
-            self.camera_rotation.y -= 0.05;
-        }
-        if keyboard::is_key_pressed(ctx, KeyCode::Down) {
-            self.camera_rotation.y += 0.05;
-        }
+        self.camera_rotation.x += mouse_delta.x * 0.01;
+        self.camera_rotation.y += mouse_delta.y * -0.01;
+
+        // if keyboard::is_key_pressed(ctx, KeyCode::Left) {
+        //     self.camera_rotation.x += 0.05;
+        // }
+        // if keyboard::is_key_pressed(ctx, KeyCode::Right) {
+        //     self.camera_rotation.x -= 0.05;
+        // }
+        // if keyboard::is_key_pressed(ctx, KeyCode::Up) {
+        //     self.camera_rotation.y -= 0.05;
+        // }
+        // if keyboard::is_key_pressed(ctx, KeyCode::Down) {
+        //     self.camera_rotation.y += 0.05;
+        // }
 
         if keyboard::is_key_pressed(ctx, KeyCode::N) {
             self.nuke_lighting = true;
@@ -558,7 +429,7 @@ impl EventHandler for Katakomb {
                     pos: camera_pos,
                     facing: gun_facing,
                     illumination: 0.5,
-                    range: 24.0,
+                    range: 32.0,
                     persistent: false,
                 };
 
@@ -569,7 +440,7 @@ impl EventHandler for Katakomb {
                     let muzzle_light = Light {
                         pos: camera_pos,
                         facing: gun_facing,
-                        illumination: 0.9,
+                        illumination: 1.0,
                         range: 0.0,
                         persistent: false,
                     };

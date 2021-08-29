@@ -3,6 +3,8 @@ use std::{
     ops::{Index, IndexMut},
 };
 
+use ggez::mint;
+
 use internship::IStr;
 use ndarray::Array3;
 use serde::{Deserialize, Serialize};

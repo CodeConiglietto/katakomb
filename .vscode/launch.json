@@ -1,20 +1,36 @@
+// {
+//     // Use IntelliSense to learn about possible attributes.
+//     // Hover to view descriptions of existing attributes.
+//     // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+//     "version": "0.2.0",
+//     "configurations": [
+//         {
+//             "name": "Launch",
+//             "type": "cppvsdbg",
+//             "request": "launch",
+//             "program": "${workspaceFolder}/target/debug/cellular3.exe",
+//             "args": [],
+//             "stopAtEntry": false,
+//             "cwd": "${workspaceFolder}",
+//             "environment": [],
+//             "externalConsole": false,
+//             "env": {"RUST_BACKTRACE": "1"},
+//         }
+//     ]
+// }
 {
-    // Use IntelliSense to learn about possible attributes.
-    // Hover to view descriptions of existing attributes.
-    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "(Windows) Launch",
-            "type": "cppvsdbg",
+            "type": "lldb",
             "request": "launch",
-            "program": "${workspaceFolder}/target/debug/cellular3.exe",
+            "name": "Debug",
+            "program": "${workspaceFolder}/target/release/katakomb",
             "args": [],
-            "stopAtEntry": false,
-            "cwd": "${workspaceFolder}",
-            "environment": [],
-            "externalConsole": false,
-            "env": {"RUST_BACKTRACE": "1"},
+            "cwd": "${workspaceRoot}",
+            "sourceLanguages": [
+                "rust"
+            ]
         }
     ]
 }

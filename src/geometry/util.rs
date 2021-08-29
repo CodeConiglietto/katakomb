@@ -1,4 +1,7 @@
+use ggez::nalgebra as na;
 use na::*;
+
+use crate::util::*;
 
 pub fn calculate_bresenham(p1: Point3<i32>, p2: Point3<i32>) -> Vec<Point3<i32>> {
     let mut line = Vec::new();
@@ -80,9 +83,9 @@ pub fn calculate_sphere_surface(radius: i32) -> Vec<Point3<f32>> {
 
     let origin = Point3::origin();
 
-    for x in -radius..radius {
-        for y in -radius..radius {
-            for z in -radius..radius {
+    for x in -radius..=radius {
+        for y in -radius..=radius {
+            for z in -radius..=radius {
                 let point = Point3::new(x as f32, y as f32, z as f32);
 
                 //DISGOSDANG
@@ -101,9 +104,9 @@ pub fn calculate_sphere(radius: i32) -> Vec<Point3<f32>> {
 
     let origin = Point3::origin();
 
-    for x in -radius..radius {
-        for y in -radius..radius {
-            for z in -radius..radius {
+    for x in -radius..=radius {
+        for y in -radius..=radius {
+            for z in -radius..=radius {
                 let point = Point3::new(x as f32, y as f32, z as f32);
 
                 //DISGOSDANG
@@ -122,5 +125,20 @@ pub fn euclidean_distance_squared(a: Point3<f32>, b: Point3<f32>) -> f32 {
     let y_diff = a.y - b.y;
     let z_diff = a.z - b.z;
 
-    (x_diff * x_diff + y_diff * y_diff + z_diff * z_diff)
+    let result = x_diff * x_diff + y_diff * y_diff + z_diff * z_diff;
+
+    result
+}
+
+pub fn get_cube_points(pos: Point3<f32>) -> Vec<Point3<f32>> {
+    vec![
+        Point3::new(pos.x - 0.0, pos.y - 0.0, pos.z - 0.0),
+        Point3::new(pos.x - 0.0, pos.y - 0.0, pos.z + 0.9),
+        Point3::new(pos.x - 0.0, pos.y + 0.9, pos.z - 0.0),
+        Point3::new(pos.x - 0.0, pos.y + 0.9, pos.z + 0.9),
+        Point3::new(pos.x + 0.9, pos.y - 0.0, pos.z - 0.0),
+        Point3::new(pos.x + 0.9, pos.y - 0.0, pos.z + 0.9),
+        Point3::new(pos.x + 0.9, pos.y + 0.9, pos.z - 0.0),
+        Point3::new(pos.x + 0.9, pos.y + 0.9, pos.z + 0.9),
+    ]
 }

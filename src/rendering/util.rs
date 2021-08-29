@@ -1,3 +1,4 @@
+use ggez::nalgebra as na;
 use na::*;
 use ndarray::prelude::*;
 

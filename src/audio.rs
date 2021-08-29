@@ -1,3 +1,4 @@
+/*
 use std::{
     cmp::Ordering,
     collections::BTreeSet,
@@ -12,7 +13,7 @@ use std::{
 
 use rodio::{buffer::SamplesBuffer, source, Sample, Source};
 
-/*
+
 trait IteratorSourceExt: Sized + Source
 where
     Self::Item: Sample,
