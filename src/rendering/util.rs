@@ -51,24 +51,42 @@ pub fn draw_player_weapon(
                         screen_pos.y * WINDOW_HEIGHT / 2.0 + WINDOW_HEIGHT / 2.0, //We need to negate this, as 2d screen space is inverse of normalised device coords
                     ];
 
-                    weapon_sprite_batch.add(DrawParam {
-                        src: tile_type.get_char_offset(&font),
-                        dest: screen_dest.into(),
-                        scale: [
+                    let dp = DrawParam::new()
+                        .src(tile_type.get_char_offset(&font))
+                        .dest(screen_dest)
+                        .scale([
                             (1.0 - screen_pos.z) * 31.4 * player_gun_scale,
                             (1.0 - screen_pos.z) * 31.4 * player_gun_scale,
-                        ]
-                        .into(),
-                        color: Color {
+                        ])
+                        .color(Color {
                             r: color.r * color_darkness,
                             g: color.g * color_darkness,
                             b: color.b * color_darkness,
                             a: 1.0,
-                        },
-                        rotation: tile_type.rotation(),
-                        offset: [0.5, 0.5].into(),
-                        ..DrawParam::default()
-                    });
+                        })
+                        .rotation(tile_type.rotation())
+                        .offset([0.5, 0.5]);
+
+                    weapon_sprite_batch.add(dp);
+
+                    // weapon_sprite_batch.add(DrawParam {
+                    //     src: tile_type.get_char_offset(&font),
+                    //     dest: screen_dest.into(),
+                    //     scale: [
+                    //         (1.0 - screen_pos.z) * 31.4 * player_gun_scale,
+                    //         (1.0 - screen_pos.z) * 31.4 * player_gun_scale,
+                    //     ]
+                    //     .into(),
+                    //     color: Color {
+                    //         r: color.r * color_darkness,
+                    //         g: color.g * color_darkness,
+                    //         b: color.b * color_darkness,
+                    //         a: 1.0,
+                    //     },
+                    //     rotation: tile_type.rotation(),
+                    //     offset: [0.5, 0.5].into(),
+                    //     ..DrawParam::default()
+                    // });
                 }
             }
         }

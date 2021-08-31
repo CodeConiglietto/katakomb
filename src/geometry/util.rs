@@ -1,4 +1,5 @@
 use na::*;
+use std::convert::TryInto;
 
 pub fn calculate_bresenham(p1: Point3<i32>, p2: Point3<i32>) -> Vec<Point3<i32>> {
     let mut line = Vec::new();
@@ -75,10 +76,12 @@ pub fn calculate_bresenham(p1: Point3<i32>, p2: Point3<i32>) -> Vec<Point3<i32>>
     line
 }
 
-pub fn calculate_sphere_surface(radius: i32) -> Vec<Point3<f32>> {
+pub fn calculate_sphere_surface(radius: usize) -> Vec<Point3<f32>> {
     let mut points = Vec::new();
 
     let origin = Point3::origin();
+
+    let radius: i32 = radius.try_into().unwrap();
 
     for x in -radius..radius {
         for y in -radius..radius {
