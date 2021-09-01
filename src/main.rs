@@ -1,5 +1,7 @@
 use std::{
+    time::Instant,
     cmp::Ordering,
+    collections::BTreeSet,
     env,
     f32::consts::{FRAC_PI_4, PI},
     fs::File,
@@ -9,6 +11,7 @@ use std::{
 };
 
 use failure::Fallible;
+use float_ord::FloatOrd;
 use ggez::{
     // audio::{SoundData, Source, SoundSource},
     conf::WindowMode,
@@ -122,7 +125,7 @@ struct Katakomb {
     lighting_sphere: Vec<Point3<f32>>,
     font: KataFont,
     tile_array: Array3<Tile>,
-    draw_tiles: Vec<Tile>,
+    draw_tiles: BTreeSet<DrawTile>,
     camera_pos: Point3<f32>,
 
     camera_rotation: Point2<f32>,
@@ -169,7 +172,7 @@ impl Katakomb {
             lighting_sphere: calculate_sphere_surface(LIGHT_RANGE),
             font: KataFont::load(ctx)?,
             tile_array: generate_chunk(Point3::new(0, 0, 0), &chunk_gen_package),
-            draw_tiles: Vec::new(),
+            draw_tiles: BTreeSet::new(),
             camera_pos: Point3::new(
                 (CHUNK_SIZE / 2) as f32,
                 (CHUNK_SIZE / 2) as f32,
@@ -365,6 +368,8 @@ fn get_tile_at(pos: Point3<f32>, tile_array: &Array3<Tile>) -> Tile {
 
 impl EventHandler<ggez::GameError> for Katakomb {
     fn update(&mut self, ctx: &mut Context) -> GameResult<()> {
+        let start_t = Instant::now();
+
         // Update code here...
 
         let mut muzzle_flash = false;
@@ -531,11 +536,11 @@ impl EventHandler<ggez::GameError> for Katakomb {
         //     camera_pos.z.floor() as i32,
         // );
 
-        // let usize_camera_pos = Point3::new(
-        //     camera_pos.x.floor() as usize,
-        //     camera_pos.y.floor() as usize,
-        //     camera_pos.z.floor() as usize,
-        // );
+        let usize_camera_pos = Point3::new(
+            camera_pos.x.floor() as usize,
+            camera_pos.y.floor() as usize,
+            camera_pos.z.floor() as usize,
+        );
 
         let light_sources = [
             Point3::new(CHUNK_SIZE / 2, CHUNK_SIZE / 2, CHUNK_SIZE / 2),
@@ -553,299 +558,52 @@ impl EventHandler<ggez::GameError> for Katakomb {
 
         for light_pos in light_sources.iter() {
             if is_in_array(self.tile_array.view(), world_pos_to_index(camera_pos)) {
-                let light_distance = LIGHT_RANGE;
+                let mut octs = split_shadowcast_octants(self.tile_array.view_mut(), *light_pos, LIGHT_RANGE);
 
-                let (tiles_width, tiles_height, tiles_depth) = self.tile_array.dim();
-
-                let light_left = light_pos.x.saturating_sub(light_distance);
-                let light_right = (light_pos.x + light_distance).min(tiles_width);
-                let light_bottom = light_pos.y.saturating_sub(light_distance);
-                let light_top = (light_pos.y + light_distance).min(tiles_height);
-                let light_back = light_pos.z.saturating_sub(light_distance);
-                let light_front = (light_pos.z + light_distance).min(tiles_depth);
-
-                let light_cube = self.tile_array.slice_mut(s![
-                    light_left..light_right,
-                    light_bottom..light_top,
-                    light_back..light_front,
-                ]);
-
-                let mid_x = light_pos.x - light_left;
-                let mid_y = light_pos.y - light_bottom;
-                let mid_z = light_pos.z - light_back;
-
-                let (bx, tx) = light_cube.split_at(Axis(0), mid_x);
-
-                let (bxby, bxty) = bx.split_at(Axis(1), mid_y);
-                let (txby, txty) = tx.split_at(Axis(1), mid_y);
-
-                let (bxbybz, bxbytz) = bxby.split_at(Axis(2), mid_z);
-                let (bxtybz, bxtytz) = bxty.split_at(Axis(2), mid_z);
-                let (txbybz, txbytz) = txby.split_at(Axis(2), mid_z);
-                let (txtybz, txtytz) = txty.split_at(Axis(2), mid_z);
-
-                let mut octs = [
-                    (bxbybz, (false, false, false)),
-                    (bxbytz, (false, false, true)),
-                    (bxtybz, (false, true, false)),
-                    (bxtytz, (false, true, true)),
-                    (txbybz, (true, false, false)),
-                    (txbytz, (true, false, true)),
-                    (txtybz, (true, true, false)),
-                    (txtytz, (true, true, true)),
-                ];
-
-                octs.par_iter_mut()
-                    .for_each(|o| shadowcast_octant(o.0.view_mut(), o.1));
+                //TODO: clean up euclidean distance cleanup by storing a usize position in a tile instead of a f32 one
+                octs.iter_mut()
+                    .for_each(
+                        |o| shadowcast_octant(
+                            o.0.view_mut(), 
+                            o.1, |t, (x, y, z)| {
+                        t.illumination = t.illumination
+                            .max(1.0 - (EUCLIDEAN_DISTANCE_LOOKUP[[x, y, z]] / LIGHT_RANGE as f32).min(1.0));}));
                 // octs.iter_mut().for_each(|o| shadowcast_octant(o.0.view_mut(), o.1));
             }
         }
         self.draw_tiles.clear();
 
-        self.draw_tiles.par_extend(
-            self.tile_array
-                .par_iter()
-                .filter(|tile| tile.illumination > 0.0)
-                .cloned(),
-        );
+        let dt = &mut self.draw_tiles;
 
-        //OLD SHITTY IMPLEMENTATION
-        // let nuke_lighting = self.nuke_lighting;
+        let mut octs = split_shadowcast_octants(self.tile_array.view_mut(), usize_camera_pos, LIGHT_RANGE);
 
-        // //populate tiles to draw
+        //TODO: clean up euclidean distance lookup by storing a usize position in a tile instead of a f32 one
+        octs.iter_mut()
+            .for_each(
+                |o| shadowcast_octant(
+                    o.0.view_mut(), 
+                    o.1, |t, (x, y, z)| 
+                        if !t.tile_type.is_transparent() && t.illumination > 0.0 {
+                            dt.insert(DrawTile{ tile: t.clone(), dist_from_eye: EUCLIDEAN_DISTANCE_LOOKUP[[x, y, z]]});
+                        }
+                    ));
 
-        // let tile_array_view = self.tile_array.view();
+        println!("Draw tiles len: {}", self.draw_tiles.len());
+        println!("Frame time: {} ms", Instant::now().duration_since(start_t).as_micros() as f64 / 1000.0);
 
-        // self.lights = self
-        //     .lights
-        //     .par_iter()
-        //     .filter(|light| light.persistent)
-        //     .cloned()
-        //     .collect();
+        // self.draw_tiles.sort_unstable_by(|a, b| {
+        //     euclidean_distance_squared(b.pos, camera_pos)
+        //         .partial_cmp(&euclidean_distance_squared(a.pos, camera_pos))
+        //         .unwrap_or(Ordering::Equal)
+        // });
 
-        // if is_in_array(self.tile_array.view(), world_pos_to_index(camera_pos)) {
-        //     let player_light = Light {
-        //         pos: camera_pos,
-        //         facing: gun_facing,
-        //         illumination: 0.5,
-        //         range: 16.0,
-        //         persistent: false,
-        //     };
-
-        //     self.lights = self
-        //         .lights
+        // self.draw_tiles.par_extend(
+        //     self.tile_array
         //         .par_iter()
-        //         .filter(|light| light.persistent)
-        //         .cloned()
-        //         .collect();
+        //         .filter(|tile| tile.illumination > 0.0)
+        //         .cloned(),
+        // );
 
-        //     if is_in_array(self.tile_array.view(), world_pos_to_index(camera_pos)) {
-        //         let player_light = Light {
-        //             pos: camera_pos,
-        //             facing: gun_facing,
-        //             illumination: 0.5,
-        //             range: 24.0,
-        //             persistent: false,
-        //         };
-
-        //         self.lights.push(player_light);
-        //         // dbg!(&lights);
-
-        //         if muzzle_flash {
-        //             let muzzle_light = Light {
-        //                 pos: camera_pos,
-        //                 facing: gun_facing,
-        //                 illumination: 0.9,
-        //                 range: 0.0,
-        //                 persistent: false,
-        //             };
-
-        //             self.lights.push(muzzle_light);
-        //         }
-        //     }
-
-        //     let light_iter = self.lights.par_iter();
-        //     let mut draw_tiles: Vec<_> = light_iter
-        //         .flat_map(|light| get_light_hitscans(light, &self.lighting_sphere, tile_array_view))
-        //         .map(|pos| {
-        //             let mut tile = get_tile_at(pos, &self.tile_array).clone();
-        //             tile.illumination = 0.5; //euclidean_distance_squared(tile.pos, light.pos) / (LIGHT_RANGE * LIGHT_RANGE) as f32;
-        //             tile
-        //         })
-        //         .collect();
-
-        //     draw_tiles = draw_tiles
-        //         .par_iter()
-        //         .filter(|tile| {
-        //             any_neighbour_empty(&tile_array.view(), world_pos_to_int(tile.pos))
-        //                 && (nuke_lighting || world_pos_to_index(try_ray_hitscan(
-        //                     tile_array.view(),
-        //                     camera_pos,
-        //                     tile.pos,
-        //                 )) == world_pos_to_index(tile.pos))
-        //         })
-        //         .cloned()
-        //         .collect();
-
-        //     draw_tiles.sort_unstable_by(|a, b| {
-        //         euclidean_distance_squared(b.pos, camera_pos)
-        //             .partial_cmp(&euclidean_distance_squared(a.pos, camera_pos))
-        //             .unwrap_or(Ordering::Equal)
-        //     });
-
-        //     draw_tiles.dedup_by(|a, b| {
-        //         let equal = world_pos_to_index(a.pos) == world_pos_to_index(b.pos);
-        //         if equal {
-        //             b.illumination = (b.illumination + 0.01).min(1.0)
-        //         };
-        //         if b.illumination > 1.0 {
-        //             panic!()
-        //         };
-        //         equal
-        //     });
-
-        //     std::mem::swap(&mut draw_tiles, &mut self.draw_tiles);
-
-        //     // self.draw_tiles.clear();
-        //     // self.draw_tiles.par_extend(
-        //     //     zip_iter
-        //     //         .into_par_iter()
-        //     //         .filter(|((x, y, z), v)| {
-        //     //             (!v.tile_type.is_transparent() || v.tile_type.illuminates())
-        //     //                 && (v.illumination > 0.01
-        //     //                     || v.tile_type.illuminates()
-        //     //                     || euclidean_distance_squared(camera_pos, v.pos) < PLAYER_SIGHT_RANGE)
-        //     //                 && {
-        //     //                     let v_pos = Point3::new(*x as i32, *y as i32, *z as i32);
-        //     //                     any_neighbour_empty(&tile_array.view(), v_pos)
-        //     //                 }
-        //     //                 && (world_pos_to_index(try_ray_hitscan(
-        //     //                     tile_array.view(),
-        //     //                     camera_pos,
-        //     //                     v.pos,
-        //     //                 )) == world_pos_to_index(v.pos)
-        //     //                     || hitscan_tile(tile_array.view(), camera_pos, v.pos).len() != 8
-        //     //                     || nuke_lighting)
-        //     //         })
-        //     //         .map(|((_x, _y, _z), v)| {
-        //     //             let mut new_v = v.clone();
-        //     //             if nuke_lighting {
-        //     //                 new_v.illumination = 1.0
-        //     //             }
-        //     //             new_v.illumination *= 1.0 - (0.5 * new_v.illumination.min(0.99)).max(0.01);
-        //     //             new_v.illumination = (new_v.illumination - 0.01).max(0.0);
-        //     //             new_v
-        //     //         }),
-        //     // );
-
-        //     // self.nuke_lighting = false;
-
-        self.draw_tiles.sort_unstable_by(|a, b| {
-            euclidean_distance_squared(b.pos, camera_pos)
-                .partial_cmp(&euclidean_distance_squared(a.pos, camera_pos))
-                .unwrap_or(Ordering::Equal)
-        });
-
-        //     // //Copy back to our world
-        //     // for new_tile in &mut self.draw_tiles {
-        //     //     self.tile_array[[
-        //     //         new_tile.pos.x.floor() as usize,
-        //     //         new_tile.pos.y.floor() as usize,
-        //     //         new_tile.pos.z.floor() as usize,
-        //     //     ]]
-        //     //     .illumination = new_tile.illumination;
-        //     // }
-
-        //     // let mut lights: Vec<_> = self
-        //     //     .draw_tiles
-        //     //     .iter()
-        //     //     .filter(|v| v.tile_type.illuminates())
-        //     //     .map(|v| Light {
-        //     //         pos: Point3::new(v.pos.x + 0.5, v.pos.y + 0.5, v.pos.z + 0.5),
-        //     //         facing: Point3::new(0.0, 1.0, 0.0),
-        //     //         illumination: 0.25,
-        //     //         range: 0.0,
-        //     //     })
-        //     //     .collect();
-
-        //     // if is_in_array(self.tile_array.view(), world_pos_to_index(camera_pos)) {
-        //     //     let player_light = Light {
-        //     //         pos: camera_pos,
-        //     //         facing: gun_facing,
-        //     //         illumination: 0.5,
-        //     //         range: 24.0,
-        //     //     };
-
-        //     //     lights.push(player_light);
-        //     //     // dbg!(&lights);
-
-        //     //     if muzzle_flash {
-        //     //         let muzzle_light = Light {
-        //     //             pos: camera_pos,
-        //     //             facing: gun_facing,
-        //     //             illumination: 0.9,
-        //     //             range: 0.0,
-        //     //         };
-
-        //     //         lights.push(muzzle_light);
-        //     //     }
-        //     // }
-
-        //     // for light in lights {
-        //     //     self.tile_array[[
-        //     //         light.pos.x.floor() as usize,
-        //     //         light.pos.y.floor() as usize,
-        //     //         light.pos.z.floor() as usize,
-        //     //     ]]
-        //     //     .illumination = 0.9;
-
-        //     //     let light_target: Point3<f32> = Point3::origin() + (light.facing * light.range).coords;
-
-        //     //     let light_deviance = self.light_noise.get([
-        //     //         light.pos.x as f64,
-        //     //         light.pos.y as f64,
-        //     //         light.pos.z as f64,
-        //     //         self.current_tic as f64 * 0.5,
-        //     //     ]);
-
-        //     //     for target_point in &self.lighting_sphere {
-        //     //         let target_point_offset = Point3::new(
-        //     //             target_point.x + light.pos.x + light_target.x,
-        //     //             target_point.y + light.pos.y + light_target.y,
-        //     //             target_point.z + light.pos.z + light_target.z,
-        //     //         );
-
-        //     //         let ray_hits =
-        //     //             hitscan_tile(self.tile_array.view(), light.pos, target_point_offset);
-
-        //     //         for hit in ray_hits {
-        //     //             if is_in_array(self.tile_array.view(), world_pos_to_index(hit))
-        //     //                 && world_pos_to_index(hit) != world_pos_to_index(target_point_offset)
-        //     //             {
-        //     //                 let hit_index = world_pos_to_index(hit);
-
-        //     //                 let ray_tile =
-        //     //                     &mut self.tile_array[[hit_index.x, hit_index.y, hit_index.z]];
-
-        //     //                 ray_tile.illumination = (ray_tile.illumination
-        //     //                     + (light.illumination
-        //     //                         / euclidean_distance_squared(
-        //     //                             ray_tile.pos,
-        //     //                             Point3::new(
-        //     //                                 light.pos.x as f32,
-        //     //                                 light.pos.y as f32,
-        //     //                                 light.pos.z as f32,
-        //     //                             ),
-        //     //                         )
-        //     //                         .max(1.0))
-        //     //                     .powf(1.1)
-        //     //                         * (light_deviance * 0.5 + 0.5) as f32)
-        //     //                     .min(1.0);
-        //     //             }
-        //     //         }
-        //     //     }
-        //     // }
-        // }
         self.current_tic += 1;
 
         Ok(())
@@ -889,6 +647,7 @@ impl EventHandler<ggez::GameError> for Katakomb {
         let mut sprite_batch = SpriteBatch::new(self.font.texture().clone());
 
         for tile in self.draw_tiles.iter() {
+            let tile = &tile.tile;
             if let Some(screen_pos) =
                 Point3::from_homogeneous(model_view_projection * tile.pos.to_homogeneous())
             {
@@ -963,7 +722,39 @@ impl EventHandler<ggez::GameError> for Katakomb {
     }
 }
 
-fn shadowcast_octant(mut slice: ArrayViewMut3<Tile>, (x_sign, y_sign, z_sign): (bool, bool, bool)) {
+struct DrawTile {
+    tile: Tile,
+    dist_from_eye: f32,
+}
+
+impl Eq for DrawTile {}
+
+impl PartialEq for DrawTile {
+    fn eq(&self, other: &Self) -> bool {
+        self.dist_from_eye == other.dist_from_eye
+        && self.tile.pos == other.tile.pos
+    }
+}
+
+impl PartialOrd for DrawTile {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for DrawTile {
+    fn cmp(&self, other: &Self) -> Ordering {
+        FloatOrd(self.dist_from_eye).cmp(&FloatOrd(other.dist_from_eye))
+            .then_with(|| FloatOrd(self.tile.pos.x).cmp(&FloatOrd(other.tile.pos.x)))
+            .then_with(|| FloatOrd(self.tile.pos.y).cmp(&FloatOrd(other.tile.pos.y)))
+            .then_with(|| FloatOrd(self.tile.pos.z).cmp(&FloatOrd(other.tile.pos.z)))
+            .reverse()
+    }
+}
+
+fn shadowcast_octant<F>(mut slice: ArrayViewMut3<Tile>, (x_sign, y_sign, z_sign): (bool, bool, bool), mut f: F) 
+    where F: FnMut(&mut Tile, (usize, usize, usize)) 
+{
     if !x_sign {
         slice.invert_axis(Axis(0));
     }
@@ -981,7 +772,7 @@ fn shadowcast_octant(mut slice: ArrayViewMut3<Tile>, (x_sign, y_sign, z_sign): (
             .view_mut()
             .permuted_axes((i, (i + 1) % 3, (i + 2) % 3));
 
-        scan_recursive_shadowcast(permuted_slice);
+        scan_recursive_shadowcast(permuted_slice, &mut f);
         // iterate_recursive_shadowcast(permuted_slice, 0.0, FRAC_PI_4, 0.0, FRAC_PI_4, 0);
 
         // let pslice_width = permuted_slice.dim().0;
@@ -1005,7 +796,9 @@ struct Shadowcast {
     z: usize,
 }
 
-fn scan_recursive_shadowcast(mut slice: ArrayViewMut3<Tile>) {
+fn scan_recursive_shadowcast<F>(mut slice: ArrayViewMut3<Tile>, mut f: F) 
+    where F: FnMut(&mut Tile, (usize, usize, usize))
+{
     let mut frontier = Vec::new();
 
     frontier.push(Shadowcast {
@@ -1068,10 +861,8 @@ fn scan_recursive_shadowcast(mut slice: ArrayViewMut3<Tile>) {
                 }
 
                 let tile = &mut slice[[x, y, current.z]];
-
-                tile.illumination = tile
-                    .illumination
-                    .max(1.0 - (dist_from_center / LIGHT_RANGE as f32).min(1.0));
+                
+                f(tile, (x, y, current.z));
 
                 // If we're on the last layer, we don't worry about bookkeeping for recursion
                 if current.z < slice_depth - 1 {
@@ -1160,6 +951,52 @@ fn scan_recursive_shadowcast(mut slice: ArrayViewMut3<Tile>) {
             }
         }
     }
+}
+
+fn split_shadowcast_octants<'a>(mut tile_array: ArrayViewMut3<'a, Tile>, origin: Point3<usize>, cast_range: usize)
+    -> [(ArrayViewMut3<'a, Tile>, (bool, bool, bool)); 8]
+{
+    let (tiles_width, tiles_height, tiles_depth) = tile_array.dim();
+
+    let light_left = origin.x.saturating_sub(cast_range);
+    let light_right = (origin.x + cast_range).min(tiles_width);
+    let light_bottom = origin.y.saturating_sub(cast_range);
+    let light_top = (origin.y + cast_range).min(tiles_height);
+    let light_back = origin.z.saturating_sub(cast_range);
+    let light_front = (origin.z + cast_range).min(tiles_depth);
+
+    let light_cube = tile_array.slice_move(s![
+        light_left..light_right,
+        light_bottom..light_top,
+        light_back..light_front,
+    ]);
+
+    let mid_x = origin.x - light_left;
+    let mid_y = origin.y - light_bottom;
+    let mid_z = origin.z - light_back;
+
+    let (bx, tx) = light_cube.split_at(Axis(0), mid_x);
+
+    let (bxby, bxty) = bx.split_at(Axis(1), mid_y);
+    let (txby, txty) = tx.split_at(Axis(1), mid_y);
+
+    let (bxbybz, bxbytz) = bxby.split_at(Axis(2), mid_z);
+    let (bxtybz, bxtytz) = bxty.split_at(Axis(2), mid_z);
+    let (txbybz, txbytz) = txby.split_at(Axis(2), mid_z);
+    let (txtybz, txtytz) = txty.split_at(Axis(2), mid_z);
+
+    let octs = [
+        (bxbybz, (false, false, false)),
+        (bxbytz, (false, false, true)),
+        (bxtybz, (false, true, false)),
+        (bxtytz, (false, true, true)),
+        (txbybz, (true, false, false)),
+        (txbytz, (true, false, true)),
+        (txtybz, (true, true, false)),
+        (txtytz, (true, true, true)),
+    ];
+
+    octs
 }
 
 // fn iterate_recursive_shadowcast(mut slice: ArrayViewMut3<Tile>, top_angle: f32, bottom_angle: f32, left_angle: f32, right_angle: f32, z: usize) {
