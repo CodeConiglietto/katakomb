@@ -107,7 +107,7 @@ pub fn gen_tile(gen_package: &ChunkGenPackage, x: usize, y: usize, z: usize) -> 
 
     Tile {
         pos: Point3::new(x as f32, y as f32, z as f32),
-        illumination: 0.0,
+        illumination_color: ggez::graphics::Color::BLACK,
         tile_type: if final_value > cave_threshold {
             TileType::Air
         } else {

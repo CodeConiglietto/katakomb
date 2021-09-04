@@ -17,7 +17,7 @@ use ggez::{
     conf::WindowMode,
     event::{self, EventHandler, KeyCode},
 
-    graphics::{self, spritebatch::SpriteBatch, DrawParam, FilterMode, Image},
+    graphics::{self, Color, spritebatch::SpriteBatch, DrawParam, FilterMode, Image},
     input::{keyboard, mouse},
     timer,
     Context,
@@ -25,7 +25,7 @@ use ggez::{
     GameResult,
 };
 use log::info;
-use na::{Isometry3, Perspective3, Point2, Point3, Rotation3, Vector3};
+use na::{Isometry3, Perspective3, Point2, Point3, Rotation3, Vector3, Unit};
 use ndarray::arr2;
 use ndarray::prelude::*;
 use noise::{OpenSimplex, Perlin, Seedable, Value, Worley};
@@ -120,29 +120,38 @@ fn main() -> Fallible<()> {
     Ok(())
 }
 
+struct Player {
+    pos: Point3<f32>,
+    vel: Vector3<f32>,
+    facing: Point2<f32>,
+
+    gun_model: Array2<TileType>,
+    gun_timer: u8,
+
+    ads: f32,
+    gun_recoil: f32,
+    gun_rotation: Point2<f32>,
+
+    crouching: bool,
+}
+
 struct Katakomb {
-    blank_texture: Image,
-    lighting_sphere: Vec<Point3<f32>>,
+    // blank_texture: Image,
+    // lighting_sphere: Vec<Point3<f32>>,
     font: KataFont,
     tile_array: Array3<Tile>,
     draw_tiles: BTreeSet<DrawTile>,
-    camera_pos: Point3<f32>,
 
-    camera_rotation: Point2<f32>,
+    player: Player,
 
     nuke_lighting: bool,
 
+    lights: Vec<(Point3<usize>, Color)>,
+
     current_tic: u64,
-
-    lights: Vec<Light>,
-    light_noise: OpenSimplex,
-
-    player_gun_model: Array2<TileType>,
-    player_gun_timer: u8,
+    // lights: Vec<Light>,
+    // light_noise: OpenSimplex,
     // player_gun_sound: SoundData,
-    player_ads: f32,
-    player_gun_recoil: f32,
-    player_gun_rotation: Point2<f32>,
     // sound_queue: Vec<(f64, Source)>,
 }
 
@@ -167,39 +176,80 @@ impl Katakomb {
 
         use crate::rendering::tile::TileType::*;
 
+        let tile_array = generate_chunk(Point3::new(0, 0, 0), &chunk_gen_package);
+
+        let lights: Vec<_> = tile_array
+            .iter()
+            .filter(
+                |tile|
+                thread_rng().gen_range(0, 5000) == 0
+                && 
+                world::util::any_neighbour_is(
+                    tile_array.view(),
+                    Point3::new(
+                        tile.pos.x.floor() as i32,
+                        tile.pos.y.floor() as i32,
+                        tile.pos.z.floor() as i32,
+                    ),
+                    |t| t.tile_type.is_transparent()
+                )
+                && world::util::any_neighbour_is(
+                    tile_array.view(),
+                    Point3::new(
+                        tile.pos.x.floor() as i32,
+                        tile.pos.y.floor() as i32,
+                        tile.pos.z.floor() as i32,
+                    ),
+                    |t| t.tile_type == TileType::Rock
+                )
+            )
+            .map(
+                |tile| (Point3::new(
+                    tile.pos.x.floor() as usize,
+                    tile.pos.y.floor() as usize,
+                    tile.pos.z.floor() as usize,
+                ), Color{r: thread_rng().gen_range(0.0, 1.0), g: thread_rng().gen_range(0.0, 1.0), b: thread_rng().gen_range(0.0, 1.0), a: 1.0})
+            )
+            .collect();
+
         Ok(Self {
-            blank_texture: Image::solid(ctx, 1, graphics::Color::WHITE).unwrap(),
-            lighting_sphere: calculate_sphere_surface(LIGHT_RANGE),
+            // blank_texture: Image::solid(ctx, 1, graphics::Color::WHITE).unwrap(),
+            // lighting_sphere: calculate_sphere_surface(LIGHT_RANGE),
             font: KataFont::load(ctx)?,
-            tile_array: generate_chunk(Point3::new(0, 0, 0), &chunk_gen_package),
+            tile_array,
             draw_tiles: BTreeSet::new(),
-            camera_pos: Point3::new(
-                (CHUNK_SIZE / 2) as f32,
-                (CHUNK_SIZE / 2) as f32,
-                (CHUNK_SIZE / 2) as f32,
-            ),
-            camera_rotation: Point2::origin(),
+            player: Player {
+                pos: Point3::new(
+                    (CHUNK_SIZE / 2) as f32,
+                    (CHUNK_SIZE / 2) as f32,
+                    (CHUNK_SIZE / 2) as f32,
+                ),
+                vel: Vector3::new(0.0, 0.0, 0.0),
+                facing: Point2::origin(),
+                gun_recoil: 0.0,
+                gun_rotation: Point2::origin(),
+                gun_model: arr2(&[
+                    [
+                        Air, Air, FrontSight, Air, Air, Air, Air, RearSight, Air, Air, Air,
+                    ],
+                    [
+                        BarrelEnd, BarrelEnd, GasBlock, Barrel, Barrel, RecLower, RecLower, RecLower,
+                        Air, StockUpper, StockUpper,
+                    ],
+                    [
+                        Air, Air, Air, Air, Air, Air, Magazine, Grip, Stock, Stock, Stock,
+                    ],
+                ]),
+                gun_timer: 0,
+                ads: 0.0,
+                crouching: false,
+            },
             nuke_lighting: false,
+            lights,
             current_tic: 0,
-            lights: Vec::new(),
-            light_noise: OpenSimplex::new(),
-            player_gun_recoil: 0.0,
-            player_gun_rotation: Point2::origin(),
-            player_gun_model: arr2(&[
-                [
-                    Air, Air, FrontSight, Air, Air, Air, Air, RearSight, Air, Air, Air,
-                ],
-                [
-                    BarrelEnd, BarrelEnd, GasBlock, Barrel, Barrel, RecLower, RecLower, RecLower,
-                    Air, StockUpper, StockUpper,
-                ],
-                [
-                    Air, Air, Air, Air, Air, Air, Magazine, Grip, Stock, Stock, Stock,
-                ],
-            ]),
-            player_gun_timer: 0,
+            // lights: Vec::new(),
+            // light_noise: OpenSimplex::new(),
             // player_gun_sound: SoundData::new(ctx, r"/gunshot.wav").unwrap(),
-            player_ads: 0.0,
             // sound_queue: Vec::new(),
         })
     }
@@ -374,149 +424,176 @@ impl EventHandler<ggez::GameError> for Katakomb {
 
         let mut muzzle_flash = false;
 
-        self.player_gun_recoil *= 0.95;
-        self.player_gun_rotation.x *= 0.95;
-        self.player_gun_rotation.y *= 0.95;
+        self.player.gun_recoil *= 0.95;
+        self.player.gun_rotation.x *= 0.95;
+        self.player.gun_rotation.y *= 0.95;
 
         let update_time = timer::duration_to_f64(timer::time_since_start(ctx));
 
         let movement_rotation =
-            Rotation3::from_axis_angle(&Vector3::y_axis(), self.camera_rotation.x);
+            Rotation3::from_axis_angle(&Vector3::y_axis(), self.player.facing.x);
 
         let gun_rotation = Rotation3::from_euler_angles(
-            -self.player_gun_rotation.y,
-            self.player_gun_rotation.x,
+            -self.player.gun_rotation.y,
+            self.player.gun_rotation.x,
             0.0,
         );
 
         let view_rotation =
-            Rotation3::from_euler_angles(self.camera_rotation.y, self.camera_rotation.x, 0.0);
+            Rotation3::from_euler_angles(self.player.facing.y, self.player.facing.x, 0.0);
 
         let gun_facing = view_rotation
             .transform_point(&gun_rotation.transform_point(&Point3::new(0.0, 0.0, 1.0)));
 
-        if self.player_gun_timer == 0 {
-            // if mouse::button_pressed(ctx, mouse::MouseButton::Left) {
-            //     self.player_gun_recoil = (self.player_gun_recoil + 0.2).min(1.0);
-            //     self.player_gun_rotation.x = (self.player_gun_rotation.x
-            //         + (thread_rng().gen::<f32>() - 0.5) * 0.05)
-            //         .min(1.0)
-            //         .max(-1.0);
-            //     self.player_gun_rotation.y = (self.player_gun_rotation.y + 0.05).min(1.0);
+        if self.player.gun_timer == 0 {
+            if mouse::button_pressed(ctx, mouse::MouseButton::Left) {
+                self.player.gun_recoil = (self.player.gun_recoil + 0.2).min(1.0);
+                self.player.gun_rotation.x = (self.player.gun_rotation.x
+                    + (thread_rng().gen::<f32>() - 0.5) * 0.05)
+                    .min(1.0)
+                    .max(-1.0);
+                self.player.gun_rotation.y = (self.player.gun_rotation.y + 0.05).min(1.0);
 
-            //     // dbg!(std::env::current_dir().unwrap().to_str().unwrap());
-            //     let (_stream, stream_handle) = OutputStream::try_default().unwrap();
-            //     // let device = rodio::default_output_device().unwrap();
-            //     let file = File::open(r"resources/gunshot.wav").unwrap();
-            //     let source = rodio::Decoder::new(BufReader::new(file)).unwrap();
+                // dbg!(std::env::current_dir().unwrap().to_str().unwrap());
+                let (_stream, stream_handle) = OutputStream::try_default().unwrap();
+                // let device = rodio::default_output_device().unwrap();
+                let file = File::open(r"resources/gunshot.wav").unwrap();
+                let source = rodio::Decoder::new(BufReader::new(file)).unwrap();
 
-            //     let mut echo_distances = Vec::new();
+                let mut echo_distances = Vec::new();
 
-            //     for cube_point in get_cube_points(Point3::new(-0.5, -0.5, -0.5)) {
-            //         let ray_target = self.camera_pos + (cube_point.coords * MAX_SOUND_RANGE * 2.0);
+                for cube_point in get_cube_points(Point3::new(-0.5, -0.5, -0.5)) {
+                    let ray_target = self.player.pos + (cube_point.coords * MAX_SOUND_RANGE * 2.0);
 
-            //         if is_in_array(self.tile_array.view(), world_pos_to_index(ray_target)) {
-            //             let ray_hit = try_bresenham_hitscan(
-            //                 self.tile_array.view(),
-            //                 world_pos_to_int(self.camera_pos),
-            //                 world_pos_to_int(ray_target),
-            //             );
+                    if is_in_array(self.tile_array.view(), world_pos_to_index(ray_target)) {
+                        let ray_hit = try_bresenham_hitscan(
+                            self.tile_array.view(),
+                            world_pos_to_int(self.player.pos),
+                            world_pos_to_int(ray_target),
+                        );
 
-            //             if ray_hit != world_pos_to_int(ray_target) {
-            //                 // //TODO mess with this
-            //                 let hit_distance = euclidean_distance_squared(
-            //                     self.camera_pos,
-            //                     Point3::new(ray_hit.x as f32, ray_hit.y as f32, ray_hit.z as f32),
-            //                 )
-            //                 .sqrt();
-            //                 let hit_distance_ratio = hit_distance / (MAX_SOUND_RANGE * 2.0);
-            //                 let hit_distance_ratio_squared = hit_distance * hit_distance;
-            //                 echo_distances.push(hit_distance_ratio);
-            //                 // let mut source = Source::from_data(ctx, self.player_gun_sound.clone()).unwrap();
-            //                 // source.set_pitch(0.5 + 0.5 * (1.0 - hit_distance_ratio));
-            //                 // source.set_fade_in(Duration::from_millis((hit_distance_ratio_squared) as u64));
-            //                 // //source.set_volume(1.0 - (hit_distance_ratio * 0.5));
-            //                 // self.sound_queue.push((update_time + (hit_distance_ratio * 0.5) as f64, source));
-            //                 // //TODO take average of hit distances and use that to change the non-ray sound's pitch
-            //             }
-            //         }
-            //     }
+                        if ray_hit != world_pos_to_int(ray_target) {
+                            // //TODO mess with this
+                            let hit_distance = euclidean_distance_squared(
+                                self.player.pos,
+                                Point3::new(ray_hit.x as f32, ray_hit.y as f32, ray_hit.z as f32),
+                            )
+                            .sqrt();
+                            let hit_distance_ratio = hit_distance / (MAX_SOUND_RANGE * 2.0);
+                            let hit_distance_ratio_squared = hit_distance * hit_distance;
+                            echo_distances.push(hit_distance_ratio);
+                            // let mut source = Source::from_data(ctx, self.player_gun_sound.clone()).unwrap();
+                            // source.set_pitch(0.5 + 0.5 * (1.0 - hit_distance_ratio));
+                            // source.set_fade_in(Duration::from_millis((hit_distance_ratio_squared) as u64));
+                            // //source.set_volume(1.0 - (hit_distance_ratio * 0.5));
+                            // self.sound_queue.push((update_time + (hit_distance_ratio * 0.5) as f64, source));
+                            // //TODO take average of hit distances and use that to change the non-ray sound's pitch
+                        }
+                    }
+                }
 
-            //     echo_distances.sort_by(|a, b| a.partial_cmp(b).unwrap());
-            //     let min_echo_distance = echo_distances.first().unwrap();
-            //     // let med_echo_distance = echo_distances[echo_distances.len() /2 ];
-            //     let max_echo_distance = echo_distances.last().unwrap();
+                echo_distances.sort_by(|a, b| a.partial_cmp(b).unwrap());
+                let min_echo_distance = echo_distances.first().unwrap();
+                // let med_echo_distance = echo_distances[echo_distances.len() /2 ];
+                let max_echo_distance = echo_distances.last().unwrap();
 
-            //     //warning: using more than 2 reverbs leads to very unpleasant results :<
-            //     stream_handle.play_raw(
-            //         source
-            //             .convert_samples::<i16>()
-            //             .buffered()
-            //             .reverb(
-            //                 Duration::from_millis((min_echo_distance * 1000.0) as u64),
-            //                 0.5 - min_echo_distance * 0.5,
-            //             )
-            //             // .reverb(
-            //             //     Duration::from_millis((med_echo_distance * 750.0) as u64),
-            //             //     0.5 - med_echo_distance * 0.5,
-            //             // )
-            //             .reverb(
-            //                 Duration::from_millis((max_echo_distance * 1250.0) as u64),
-            //                 0.25 - max_echo_distance * 0.25,
-            //             )
-            //             .convert_samples(),
-            //     );
+                //warning: using more than 2 reverbs leads to very unpleasant results :<
+                stream_handle.play_raw(
+                    source
+                        .convert_samples::<i16>()
+                        .buffered()
+                        .reverb(
+                            Duration::from_millis((min_echo_distance * 1000.0) as u64),
+                            0.5 - min_echo_distance * 0.5,
+                        )
+                        // .reverb(
+                        //     Duration::from_millis((med_echo_distance * 750.0) as u64),
+                        //     0.5 - med_echo_distance * 0.5,
+                        // )
+                        .reverb(
+                            Duration::from_millis((max_echo_distance * 1250.0) as u64),
+                            0.25 - max_echo_distance * 0.25,
+                        )
+                        .convert_samples(),
+                ).unwrap();
 
-            //     muzzle_flash = true;
-            //     self.player_gun_timer = 12;
-            // }
+                muzzle_flash = true;
+                self.player.gun_timer = 12;
+            }
         } else {
-            self.player_gun_timer -= 1;
+            self.player.gun_timer -= 1;
+        }
+
+        if keyboard::is_key_pressed(ctx, KeyCode::Left) {
+            self.player.facing.x += 0.025;
+        }
+        if keyboard::is_key_pressed(ctx, KeyCode::Right) {
+            self.player.facing.x -= 0.025;
+        }
+        if keyboard::is_key_pressed(ctx, KeyCode::Up) {
+            self.player.facing.y -= 0.025;
+        }
+        if keyboard::is_key_pressed(ctx, KeyCode::Down) {
+            self.player.facing.y += 0.025;
         }
 
         if mouse::button_pressed(ctx, mouse::MouseButton::Right) {
-            self.player_ads *= 0.9; //(self.player_ads - 0.1).max(0.0);
+            self.player.ads *= 0.9; //(self.player.ads - 0.1).max(0.0);
         } else {
-            self.player_ads = (self.player_ads + 0.1).min(1.0);
+            self.player.ads = (self.player.ads + 0.1).min(1.0);
         }
-
-        let mut movement_offset: Point3<f32> = Point3::origin();
 
         if keyboard::is_key_pressed(ctx, KeyCode::A) {
-            movement_offset.x += 0.25;
+            self.player.vel.x += 0.01;
         }
         if keyboard::is_key_pressed(ctx, KeyCode::D) {
-            movement_offset.x -= 0.25;
-        }
-        if keyboard::is_key_pressed(ctx, KeyCode::Space) {
-            movement_offset.y += 0.25;
-        }
-        if keyboard::is_key_pressed(ctx, KeyCode::LControl) {
-            movement_offset.y -= 0.25;
+            self.player.vel.x -= 0.01;
         }
         if keyboard::is_key_pressed(ctx, KeyCode::W) {
-            movement_offset.z += 0.25;
+            self.player.vel.z += 0.01;
         }
         if keyboard::is_key_pressed(ctx, KeyCode::S) {
-            movement_offset.z -= 0.25;
+            self.player.vel.z -= 0.01;
         }
 
-        movement_offset = movement_rotation.transform_point(&movement_offset);
+        if get_tile_at(self.player.pos + Point3::new(0.0f32, -0.1f32, 0.0f32).coords, &self.tile_array).tile_type.collides() {
+            if keyboard::is_key_pressed(ctx, KeyCode::Space) {
+                self.player.vel.y += 0.3;
+            }
+        }else{
+            self.player.vel.y -= 0.01;
+        }
+        if keyboard::is_key_pressed(ctx, KeyCode::LControl) {
+            self.player.crouching = true;
+        }else{
+            self.player.crouching = false;
+        }
 
-        self.camera_pos = self.camera_pos + movement_offset.coords;
 
-        if keyboard::is_key_pressed(ctx, KeyCode::Left) {
-            self.camera_rotation.x += 0.05;
+        if get_tile_at(self.player.pos + Point3::new(self.player.vel.x, 0.0f32, 0.0f32).coords, &self.tile_array).tile_type.collides() {
+            self.player.vel.x = 0.0;
         }
-        if keyboard::is_key_pressed(ctx, KeyCode::Right) {
-            self.camera_rotation.x -= 0.05;
+        if get_tile_at(self.player.pos + Point3::new(0.0f32, self.player.vel.y, 0.0f32).coords, &self.tile_array).tile_type.collides() {
+            self.player.vel.y = 0.0;
         }
-        if keyboard::is_key_pressed(ctx, KeyCode::Up) {
-            self.camera_rotation.y -= 0.05;
+        if get_tile_at(self.player.pos + Point3::new(0.0f32, 0.0f32, self.player.vel.z).coords, &self.tile_array).tile_type.collides() {
+            self.player.vel.z = 0.0;
         }
-        if keyboard::is_key_pressed(ctx, KeyCode::Down) {
-            self.camera_rotation.y += 0.05;
+
+        let vel_normalised = Unit::new_and_get(self.player.vel);
+        if vel_normalised.1 > 1.0 {
+            self.player.vel = vel_normalised.0.into_inner();
         }
+
+        let movement_offset = movement_rotation.transform_vector(&self.player.vel);
+
+        let new_pos = self.player.pos + movement_offset;
+
+        if !get_tile_at(new_pos, &self.tile_array).tile_type.collides() {
+            self.player.pos = new_pos;
+        }
+
+        self.player.vel *= 0.9;
 
         if keyboard::is_key_pressed(ctx, KeyCode::N) {
             self.nuke_lighting = true;
@@ -525,7 +602,7 @@ impl EventHandler<ggez::GameError> for Katakomb {
         self.draw_tiles.clear();
 
         //let tile_points = self.tile_draw_points;
-        let camera_pos = self.camera_pos;
+        let camera_pos = self.player.pos;
 
         // let tile_array = &self.tile_array;
         // let zip_iter = ndarray::Zip::indexed(tile_array);
@@ -538,25 +615,52 @@ impl EventHandler<ggez::GameError> for Katakomb {
 
         let usize_camera_pos = Point3::new(
             camera_pos.x.floor() as usize,
-            camera_pos.y.floor() as usize,
+            camera_pos.y.floor() as usize + 1,
             camera_pos.z.floor() as usize,
         );
 
-        let light_sources = [
-            Point3::new(CHUNK_SIZE / 2, CHUNK_SIZE / 2, CHUNK_SIZE / 2),
-            Point3::new(
-                camera_pos.x.floor() as usize,
-                camera_pos.y.floor() as usize,
-                camera_pos.z.floor() as usize,
-            ),
-        ];
+        let mut light_sources = Vec::new();
+
+        light_sources.push(
+            (usize_camera_pos, Color::GREEN),
+        );
+
+        if muzzle_flash {
+            light_sources.push(
+                (Point3::new(
+                    camera_pos.x.floor() as usize,
+                    camera_pos.y.floor() as usize,
+                    camera_pos.z.floor() as usize,
+                ), Color::YELLOW),
+            );
+        }
+
+        // light_sources.extend(
+        //     [
+        //         (Point3::new(
+        //             CHUNK_SIZE / 2 - 2, 
+        //             CHUNK_SIZE / 2 - 2, 
+        //             CHUNK_SIZE / 2
+        //         ), Color::BLUE),
+        //         (Point3::new(
+        //             CHUNK_SIZE / 2 + 2, 
+        //             CHUNK_SIZE / 2 + 2,
+        //             CHUNK_SIZE / 2
+        //         ), Color::RED),
+        //     ].iter()
+        // );
+
+        light_sources.extend(self.lights.iter().cloned());
 
         //NEW SHITTY IMPLEMENTATION
         self.tile_array
             .par_iter_mut()
-            .for_each(|tile| tile.illumination = 0.0);
+            .for_each(|tile| tile.illumination_color = Color::BLACK);
 
-        for light_pos in light_sources.iter() {
+        for light in light_sources.iter() {
+            let light_pos: &Point3<usize> = &light.0.into();
+            let light_color = light.1;
+
             if is_in_array(self.tile_array.view(), world_pos_to_index(camera_pos)) {
                 let mut octs = split_shadowcast_octants(self.tile_array.view_mut(), *light_pos, LIGHT_RANGE);
 
@@ -565,9 +669,18 @@ impl EventHandler<ggez::GameError> for Katakomb {
                     .for_each(
                         |o| shadowcast_octant(
                             o.0.view_mut(), 
-                            o.1, |t, (x, y, z)| {
-                        t.illumination = t.illumination
-                            .max(1.0 - (EUCLIDEAN_DISTANCE_LOOKUP[[x, y, z]] / LIGHT_RANGE as f32).min(1.0));}));
+                            o.1, 
+                            LIGHT_RANGE,
+                            |t, (x, y, z)| {
+                                t.illumination_color = 
+                                    combine_light_colors(
+                                        scale_color(
+                                            light_color, 
+                                            1.0 - (EUCLIDEAN_DISTANCE_LOOKUP[[x, y, z]] / LIGHT_RANGE as f32).min(1.0)
+                                        ),
+                                        t.illumination_color
+                                    );
+                            }));
                 // octs.iter_mut().for_each(|o| shadowcast_octant(o.0.view_mut(), o.1));
             }
         }
@@ -575,20 +688,26 @@ impl EventHandler<ggez::GameError> for Katakomb {
 
         let dt = &mut self.draw_tiles;
 
-        let mut octs = split_shadowcast_octants(self.tile_array.view_mut(), usize_camera_pos, LIGHT_RANGE);
+        let mut fov_octs = split_shadowcast_octants(self.tile_array.view_mut(), usize_camera_pos, PLAYER_SIGHT_RANGE);
 
-        //TODO: clean up euclidean distance lookup by storing a usize position in a tile instead of a f32 one
-        octs.iter_mut()
+        fov_octs.iter_mut()
             .for_each(
                 |o| shadowcast_octant(
                     o.0.view_mut(), 
-                    o.1, |t, (x, y, z)| 
-                        if !t.tile_type.is_transparent() && t.illumination > 0.0 {
-                            dt.insert(DrawTile{ tile: t.clone(), dist_from_eye: EUCLIDEAN_DISTANCE_LOOKUP[[x, y, z]]});
+                    o.1, 
+                    PLAYER_SIGHT_RANGE,
+                    |t, (x, y, z)|
+                        if !t.tile_type.is_transparent() && t.illuminated() {
+                            dt.insert(
+                                DrawTile{ 
+                                    tile: t.clone(),
+                                    dist_from_eye: EUCLIDEAN_DISTANCE_LOOKUP[[x, y, z]]
+                                });
                         }
                     ));
 
         println!("Draw tiles len: {}", self.draw_tiles.len());
+        println!("Light sources len: {}", light_sources.len());
         println!("Frame time: {} ms", Instant::now().duration_since(start_t).as_micros() as f64 / 1000.0);
 
         // self.draw_tiles.sort_unstable_by(|a, b| {
@@ -617,17 +736,17 @@ impl EventHandler<ggez::GameError> for Katakomb {
 
         // Our camera looks toward the point (1.0, 0.0, 0.0).
         // It is located at (0.0, 0.0, 1.0).
-        let eye = self.camera_pos; //Point3::new(0.0, 0.0, 1.0);
+        let eye = self.player.pos + Point3::new(0.0, 1.0, 0.0).coords; //Point3::new(0.0, 0.0, 1.0);
 
         let rotation =
-            Rotation3::from_euler_angles(self.camera_rotation.y, self.camera_rotation.x, 0.0);
+            Rotation3::from_euler_angles(self.player.facing.y, self.player.facing.x, 0.0);
 
         let rotation_offset = rotation.transform_point(&Point3::new(0.0, 0.0, 1.0));
 
         let target = Point3::new(
-            self.camera_pos.x + rotation_offset.x,
-            self.camera_pos.y + rotation_offset.y,
-            self.camera_pos.z + rotation_offset.z,
+            self.player.pos.x + rotation_offset.x,
+            self.player.pos.y + rotation_offset.y + 1.0,
+            self.player.pos.z + rotation_offset.z,
         );
         // let target = Point3::new(0.0, 0.0, 0.0);
         let view = Isometry3::look_at_rh(&eye, &target, &Vector3::y());
@@ -652,9 +771,14 @@ impl EventHandler<ggez::GameError> for Katakomb {
                 Point3::from_homogeneous(model_view_projection * tile.pos.to_homogeneous())
             {
                 if screen_pos.z >= -1.0 && screen_pos.z <= 1.0 {
-                    let color = tile.tile_type.get_color();
-                    let color_darkness =
-                        (1.0 - screen_pos.z.min(1.0).max(0.0)) * 0.25 + tile.illumination * 0.75;
+                    let tile_color = tile.tile_type.get_color();
+                    let illumination_color = tile.illumination_color;
+                    // let color = tile.illumination_color;
+                    let color = average_colors(tile_color, illumination_color);
+                    let color_darkness = 1.0;
+                        // tile.illumination;
+                    // let color_darkness =
+                    //     (1.0 - screen_pos.z.min(1.0).max(0.0)) * 0.25 + tile.illumination * 0.75;
                     let color_back_darkness = color_darkness * 0.75;
 
                     let screen_dest = [
@@ -708,12 +832,12 @@ impl EventHandler<ggez::GameError> for Katakomb {
             &mut weapon_sprite_batch,
             &self.font,
             model_view_projection,
-            self.camera_pos,
+            self.player.pos,
             rotation,
-            &self.player_gun_model,
-            self.player_ads,
-            self.player_gun_recoil,
-            self.player_gun_rotation,
+            &self.player.gun_model,
+            self.player.ads,
+            self.player.gun_recoil,
+            self.player.gun_rotation,
         );
 
         ggez::graphics::draw(ctx, &weapon_sprite_batch, DrawParam::default())?;
@@ -752,38 +876,38 @@ impl Ord for DrawTile {
     }
 }
 
-fn shadowcast_octant<F>(mut slice: ArrayViewMut3<Tile>, (x_sign, y_sign, z_sign): (bool, bool, bool), mut f: F) 
+fn shadowcast_octant<F>(mut slice: ArrayViewMut3<Tile>, (x_sign, y_sign, z_sign): (bool, bool, bool), cast_range: usize, mut f: F) 
     where F: FnMut(&mut Tile, (usize, usize, usize)) 
 {
-    if !x_sign {
-        slice.invert_axis(Axis(0));
-    }
-    if !y_sign {
-        slice.invert_axis(Axis(1));
-    }
-    if !z_sign {
-        slice.invert_axis(Axis(2));
-    }
+    if !slice.is_empty() {
+        if !x_sign {
+            slice.invert_axis(Axis(0));
+        }
+        if !y_sign {
+            slice.invert_axis(Axis(1));
+        }
+        if !z_sign {
+            slice.invert_axis(Axis(2));
+        }
 
-    let total_len = slice.dim().0 + slice.dim().1 + slice.dim().2;
+        for i in 0..3 {
+            let permuted_slice = slice
+                .view_mut()
+                .permuted_axes((i, (i + 1) % 3, (i + 2) % 3));
 
-    for i in 0..3 {
-        let mut permuted_slice = slice
-            .view_mut()
-            .permuted_axes((i, (i + 1) % 3, (i + 2) % 3));
+            scan_recursive_shadowcast(permuted_slice, cast_range, &mut f);
+            // iterate_recursive_shadowcast(permuted_slice, 0.0, FRAC_PI_4, 0.0, FRAC_PI_4, 0);
 
-        scan_recursive_shadowcast(permuted_slice, &mut f);
-        // iterate_recursive_shadowcast(permuted_slice, 0.0, FRAC_PI_4, 0.0, FRAC_PI_4, 0);
+            // let pslice_width = permuted_slice.dim().0;
+            // let pslice_height = permuted_slice.dim().1;
 
-        // let pslice_width = permuted_slice.dim().0;
-        // let pslice_height = permuted_slice.dim().1;
-
-        // for (z, mut sub_slice) in permuted_slice.axis_iter_mut(Axis(2)).enumerate() {
-        //     for ((x, y), tile) in sub_slice.slice_mut(s![..z.min(pslice_width), ..z.min(pslice_height)]).indexed_iter_mut() {
-        //         // tile.illumination = 1.0 - ((x + y + z) as f32 / total_len as f32);
-        //         tile.illumination = 1.0 / z as f32;
-        //     }
-        // }
+            // for (z, mut sub_slice) in permuted_slice.axis_iter_mut(Axis(2)).enumerate() {
+            //     for ((x, y), tile) in sub_slice.slice_mut(s![..z.min(pslice_width), ..z.min(pslice_height)]).indexed_iter_mut() {
+            //         // tile.illumination = 1.0 - ((x + y + z) as f32 / total_len as f32);
+            //         tile.illumination = 1.0 / z as f32;
+            //     }
+            // }
+        }
     }
 }
 
@@ -796,7 +920,7 @@ struct Shadowcast {
     z: usize,
 }
 
-fn scan_recursive_shadowcast<F>(mut slice: ArrayViewMut3<Tile>, mut f: F) 
+fn scan_recursive_shadowcast<F>(mut slice: ArrayViewMut3<Tile>, cast_range: usize, mut f: F) 
     where F: FnMut(&mut Tile, (usize, usize, usize))
 {
     let mut frontier = Vec::new();
@@ -826,7 +950,7 @@ fn scan_recursive_shadowcast<F>(mut slice: ArrayViewMut3<Tile>, mut f: F)
 
             for x in left..=right {
                 let dist_from_center = EUCLIDEAN_DISTANCE_LOOKUP[[x, y, current.z]];
-                let outside_range = dist_from_center >= LIGHT_RANGE as f32;
+                let outside_range = dist_from_center >= cast_range as f32;
 
                 if outside_range {
                     if current.z < slice_depth - 1 {
@@ -1029,3 +1153,30 @@ fn split_shadowcast_octants<'a>(mut tile_array: ArrayViewMut3<'a, Tile>, origin:
 //         }
 //     }
 // }
+
+fn combine_light_colors(a: Color, b: Color) -> Color {
+    Color{
+        r: a.r.max(b.r).min(1.0),
+        g: a.g.max(b.g).min(1.0),
+        b: a.b.max(b.b).min(1.0),
+        a: 1.0
+    }
+}
+
+fn average_colors(a: Color, b: Color) -> Color {
+    Color{
+        r: (a.r + b.r) / 2.0,
+        g: (a.g + b.g) / 2.0,
+        b: (a.b + b.b) / 2.0,
+        a: 1.0
+    }
+}
+
+fn scale_color(color: Color, alpha: f32) -> Color {
+    Color{
+        r: color.r * alpha,
+        g: color.g * alpha,
+        b: color.b * alpha,
+        a: 1.0
+    }
+}
