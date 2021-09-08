@@ -672,12 +672,25 @@ impl EventHandler<ggez::GameError> for Katakomb {
             PLAYER_SIGHT_RANGE,
         );
 
+        let player_rotation =
+            Rotation3::from_euler_angles(self.player.facing.y, self.player.facing.x, 0.0);
+
+        let fov_facing = Unit::new_normalize(
+            player_rotation
+                .transform_point(&Point3::new(0.0, 0.0, 1.0))
+                .coords,
+        );
+
         fov_octs.iter_mut().for_each(|o| {
             shadowcast_octant(
                 o.0.view_mut(),
                 o.1,
                 PLAYER_SIGHT_RANGE,
                 LightShape::Sphere,
+                //Cone {
+                //    facing: fov_facing,
+                //    width_angle: FRAC_PI_4,
+                //},
                 camera_pos,
                 |t, (x, y, z)| {
                     if !t.tile_type.is_transparent() && t.illuminated() {
@@ -918,7 +931,13 @@ impl LightShape {
             Self::Cone {
                 facing,
                 width_angle,
-            } => facing.into_inner().angle(&pos.coords) < *width_angle,
+            } => {
+                if let Some(unit) = Unit::try_new(pos.coords, 1.0) {
+                    facing.into_inner().angle(&unit.into_inner()) < *width_angle
+                } else {
+                    true
+                }
+            }
         }
     }
 }
