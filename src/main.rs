@@ -82,6 +82,9 @@ impl Default for Mode {
 fn main() -> Fallible<()> {
     let opts = Opts::from_args();
 
+    // disable winit's hidpi
+    env::set_var("WINIT_X11_SCALE_FACTOR", "1");
+
     fern::Dispatch::new()
         .format(|out, message, record| {
             out.finish(format_args!(
@@ -458,11 +461,7 @@ impl EventHandler<ggez::GameError> for Katakomb {
 
         let (screen_width, screen_height) = graphics::drawable_size(ctx);
 
-        let screen_center: Point2<f32> = [
-            screen_width / 2.0,
-            screen_height / 2.0,
-        ]
-        .into();
+        let screen_center: Point2<f32> = [screen_width / 2.0, screen_height / 2.0].into();
 
         // let old_mouse_pos = self.mouse_pos;
         // self.mouse_pos = mouse::position(ctx);
