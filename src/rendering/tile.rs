@@ -115,8 +115,8 @@ pub struct Tile {
 
 impl Tile {
     pub fn illuminated(&self) -> bool {
-        self.illumination_color.r > 0.0 ||
-        self.illumination_color.g > 0.0 ||
-        self.illumination_color.b > 0.0
+        self.illumination_color.r > 0.0
+            || self.illumination_color.g > 0.0
+            || self.illumination_color.b > 0.0
     }
 }

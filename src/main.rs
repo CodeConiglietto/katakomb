@@ -1,5 +1,4 @@
 use std::{
-    time::Instant,
     cmp::Ordering,
     collections::BTreeSet,
     env,
@@ -8,6 +7,7 @@ use std::{
     io::BufReader,
     path::PathBuf,
     time::Duration,
+    time::Instant,
 };
 
 use failure::Fallible;
@@ -17,7 +17,7 @@ use ggez::{
     conf::WindowMode,
     event::{self, EventHandler, KeyCode},
 
-    graphics::{self, Color, spritebatch::SpriteBatch, DrawParam, FilterMode, Image},
+    graphics::{self, spritebatch::SpriteBatch, Color, DrawParam, FilterMode, Image},
     input::{keyboard, mouse},
     timer,
     Context,
@@ -25,7 +25,7 @@ use ggez::{
     GameResult,
 };
 use log::info;
-use na::{Isometry3, Perspective3, Point2, Point3, Rotation3, Vector3, Unit};
+use na::{Isometry3, Perspective3, Point2, Point3, Rotation3, Unit, Vector3};
 use ndarray::arr2;
 use ndarray::prelude::*;
 use noise::{OpenSimplex, Perlin, Seedable, Value, Worley};
@@ -180,36 +180,42 @@ impl Katakomb {
 
         let lights: Vec<_> = tile_array
             .iter()
-            .filter(
-                |tile|
+            .filter(|tile| {
                 thread_rng().gen_range(0, 5000) == 0
-                && 
-                world::util::any_neighbour_is(
-                    tile_array.view(),
+                    && world::util::any_neighbour_is(
+                        tile_array.view(),
+                        Point3::new(
+                            tile.pos.x.floor() as i32,
+                            tile.pos.y.floor() as i32,
+                            tile.pos.z.floor() as i32,
+                        ),
+                        |t| t.tile_type.is_transparent(),
+                    )
+                    && world::util::any_neighbour_is(
+                        tile_array.view(),
+                        Point3::new(
+                            tile.pos.x.floor() as i32,
+                            tile.pos.y.floor() as i32,
+                            tile.pos.z.floor() as i32,
+                        ),
+                        |t| t.tile_type == TileType::Rock,
+                    )
+            })
+            .map(|tile| {
+                (
                     Point3::new(
-                        tile.pos.x.floor() as i32,
-                        tile.pos.y.floor() as i32,
-                        tile.pos.z.floor() as i32,
+                        tile.pos.x.floor() as usize,
+                        tile.pos.y.floor() as usize,
+                        tile.pos.z.floor() as usize,
                     ),
-                    |t| t.tile_type.is_transparent()
+                    Color {
+                        r: thread_rng().gen_range(0.0, 1.0),
+                        g: thread_rng().gen_range(0.0, 1.0),
+                        b: thread_rng().gen_range(0.0, 1.0),
+                        a: 1.0,
+                    },
                 )
-                && world::util::any_neighbour_is(
-                    tile_array.view(),
-                    Point3::new(
-                        tile.pos.x.floor() as i32,
-                        tile.pos.y.floor() as i32,
-                        tile.pos.z.floor() as i32,
-                    ),
-                    |t| t.tile_type == TileType::Rock
-                )
-            )
-            .map(
-                |tile| (Point3::new(
-                    tile.pos.x.floor() as usize,
-                    tile.pos.y.floor() as usize,
-                    tile.pos.z.floor() as usize,
-                ), Color{r: thread_rng().gen_range(0.0, 1.0), g: thread_rng().gen_range(0.0, 1.0), b: thread_rng().gen_range(0.0, 1.0), a: 1.0})
-            )
+            })
             .collect();
 
         Ok(Self {
@@ -233,8 +239,8 @@ impl Katakomb {
                         Air, Air, FrontSight, Air, Air, Air, Air, RearSight, Air, Air, Air,
                     ],
                     [
-                        BarrelEnd, BarrelEnd, GasBlock, Barrel, Barrel, RecLower, RecLower, RecLower,
-                        Air, StockUpper, StockUpper,
+                        BarrelEnd, BarrelEnd, GasBlock, Barrel, Barrel, RecLower, RecLower,
+                        RecLower, Air, StockUpper, StockUpper,
                     ],
                     [
                         Air, Air, Air, Air, Air, Air, Magazine, Grip, Stock, Stock, Stock,
@@ -498,24 +504,26 @@ impl EventHandler<ggez::GameError> for Katakomb {
                 let max_echo_distance = echo_distances.last().unwrap();
 
                 //warning: using more than 2 reverbs leads to very unpleasant results :<
-                stream_handle.play_raw(
-                    source
-                        .convert_samples::<i16>()
-                        .buffered()
-                        .reverb(
-                            Duration::from_millis((min_echo_distance * 1000.0) as u64),
-                            0.5 - min_echo_distance * 0.5,
-                        )
-                        // .reverb(
-                        //     Duration::from_millis((med_echo_distance * 750.0) as u64),
-                        //     0.5 - med_echo_distance * 0.5,
-                        // )
-                        .reverb(
-                            Duration::from_millis((max_echo_distance * 1250.0) as u64),
-                            0.25 - max_echo_distance * 0.25,
-                        )
-                        .convert_samples(),
-                ).unwrap();
+                stream_handle
+                    .play_raw(
+                        source
+                            .convert_samples::<i16>()
+                            .buffered()
+                            .reverb(
+                                Duration::from_millis((min_echo_distance * 1000.0) as u64),
+                                0.5 - min_echo_distance * 0.5,
+                            )
+                            // .reverb(
+                            //     Duration::from_millis((med_echo_distance * 750.0) as u64),
+                            //     0.5 - med_echo_distance * 0.5,
+                            // )
+                            .reverb(
+                                Duration::from_millis((max_echo_distance * 1250.0) as u64),
+                                0.25 - max_echo_distance * 0.25,
+                            )
+                            .convert_samples(),
+                    )
+                    .unwrap();
 
                 muzzle_flash = true;
                 self.player.gun_timer = 12;
@@ -556,27 +564,50 @@ impl EventHandler<ggez::GameError> for Katakomb {
             self.player.vel.z -= 0.01;
         }
 
-        if get_tile_at(self.player.pos + Point3::new(0.0f32, -0.1f32, 0.0f32).coords, &self.tile_array).tile_type.collides() {
+        if get_tile_at(
+            self.player.pos + Point3::new(0.0f32, -0.1f32, 0.0f32).coords,
+            &self.tile_array,
+        )
+        .tile_type
+        .collides()
+        {
             if keyboard::is_key_pressed(ctx, KeyCode::Space) {
                 self.player.vel.y += 0.3;
             }
-        }else{
+        } else {
             self.player.vel.y -= 0.01;
         }
         if keyboard::is_key_pressed(ctx, KeyCode::LControl) {
             self.player.crouching = true;
-        }else{
+        } else {
             self.player.crouching = false;
         }
 
-
-        if get_tile_at(self.player.pos + Point3::new(self.player.vel.x, 0.0f32, 0.0f32).coords, &self.tile_array).tile_type.collides() {
+        if get_tile_at(
+            self.player.pos + Point3::new(self.player.vel.x, 0.0f32, 0.0f32).coords,
+            &self.tile_array,
+        )
+        .tile_type
+        .collides()
+        {
             self.player.vel.x = 0.0;
         }
-        if get_tile_at(self.player.pos + Point3::new(0.0f32, self.player.vel.y, 0.0f32).coords, &self.tile_array).tile_type.collides() {
+        if get_tile_at(
+            self.player.pos + Point3::new(0.0f32, self.player.vel.y, 0.0f32).coords,
+            &self.tile_array,
+        )
+        .tile_type
+        .collides()
+        {
             self.player.vel.y = 0.0;
         }
-        if get_tile_at(self.player.pos + Point3::new(0.0f32, 0.0f32, self.player.vel.z).coords, &self.tile_array).tile_type.collides() {
+        if get_tile_at(
+            self.player.pos + Point3::new(0.0f32, 0.0f32, self.player.vel.z).coords,
+            &self.tile_array,
+        )
+        .tile_type
+        .collides()
+        {
             self.player.vel.z = 0.0;
         }
 
@@ -621,29 +652,28 @@ impl EventHandler<ggez::GameError> for Katakomb {
 
         let mut light_sources = Vec::new();
 
-        light_sources.push(
-            (usize_camera_pos, Color::GREEN),
-        );
+        light_sources.push((usize_camera_pos, Color::GREEN));
 
         if muzzle_flash {
-            light_sources.push(
-                (Point3::new(
+            light_sources.push((
+                Point3::new(
                     camera_pos.x.floor() as usize,
                     camera_pos.y.floor() as usize,
                     camera_pos.z.floor() as usize,
-                ), Color::YELLOW),
-            );
+                ),
+                Color::YELLOW,
+            ));
         }
 
         // light_sources.extend(
         //     [
         //         (Point3::new(
-        //             CHUNK_SIZE / 2 - 2, 
-        //             CHUNK_SIZE / 2 - 2, 
+        //             CHUNK_SIZE / 2 - 2,
+        //             CHUNK_SIZE / 2 - 2,
         //             CHUNK_SIZE / 2
         //         ), Color::BLUE),
         //         (Point3::new(
-        //             CHUNK_SIZE / 2 + 2, 
+        //             CHUNK_SIZE / 2 + 2,
         //             CHUNK_SIZE / 2 + 2,
         //             CHUNK_SIZE / 2
         //         ), Color::RED),
@@ -662,25 +692,22 @@ impl EventHandler<ggez::GameError> for Katakomb {
             let light_color = light.1;
 
             if is_in_array(self.tile_array.view(), world_pos_to_index(camera_pos)) {
-                let mut octs = split_shadowcast_octants(self.tile_array.view_mut(), *light_pos, LIGHT_RANGE);
+                let mut octs =
+                    split_shadowcast_octants(self.tile_array.view_mut(), *light_pos, LIGHT_RANGE);
 
                 //TODO: clean up euclidean distance cleanup by storing a usize position in a tile instead of a f32 one
-                octs.iter_mut()
-                    .for_each(
-                        |o| shadowcast_octant(
-                            o.0.view_mut(), 
-                            o.1, 
-                            LIGHT_RANGE,
-                            |t, (x, y, z)| {
-                                t.illumination_color = 
-                                    combine_light_colors(
-                                        scale_color(
-                                            light_color, 
-                                            1.0 - (EUCLIDEAN_DISTANCE_LOOKUP[[x, y, z]] / LIGHT_RANGE as f32).min(1.0)
-                                        ),
-                                        t.illumination_color
-                                    );
-                            }));
+                octs.iter_mut().for_each(|o| {
+                    shadowcast_octant(o.0.view_mut(), o.1, LIGHT_RANGE, |t, (x, y, z)| {
+                        t.illumination_color = combine_light_colors(
+                            scale_color(
+                                light_color,
+                                1.0 - (EUCLIDEAN_DISTANCE_LOOKUP[[x, y, z]] / LIGHT_RANGE as f32)
+                                    .min(1.0),
+                            ),
+                            t.illumination_color,
+                        );
+                    })
+                });
                 // octs.iter_mut().for_each(|o| shadowcast_octant(o.0.view_mut(), o.1));
             }
         }
@@ -688,27 +715,29 @@ impl EventHandler<ggez::GameError> for Katakomb {
 
         let dt = &mut self.draw_tiles;
 
-        let mut fov_octs = split_shadowcast_octants(self.tile_array.view_mut(), usize_camera_pos, PLAYER_SIGHT_RANGE);
+        let mut fov_octs = split_shadowcast_octants(
+            self.tile_array.view_mut(),
+            usize_camera_pos,
+            PLAYER_SIGHT_RANGE,
+        );
 
-        fov_octs.iter_mut()
-            .for_each(
-                |o| shadowcast_octant(
-                    o.0.view_mut(), 
-                    o.1, 
-                    PLAYER_SIGHT_RANGE,
-                    |t, (x, y, z)|
-                        if !t.tile_type.is_transparent() && t.illuminated() {
-                            dt.insert(
-                                DrawTile{ 
-                                    tile: t.clone(),
-                                    dist_from_eye: EUCLIDEAN_DISTANCE_LOOKUP[[x, y, z]]
-                                });
-                        }
-                    ));
+        fov_octs.iter_mut().for_each(|o| {
+            shadowcast_octant(o.0.view_mut(), o.1, PLAYER_SIGHT_RANGE, |t, (x, y, z)| {
+                if !t.tile_type.is_transparent() && t.illuminated() {
+                    dt.insert(DrawTile {
+                        tile: t.clone(),
+                        dist_from_eye: EUCLIDEAN_DISTANCE_LOOKUP[[x, y, z]],
+                    });
+                }
+            })
+        });
 
         println!("Draw tiles len: {}", self.draw_tiles.len());
         println!("Light sources len: {}", light_sources.len());
-        println!("Frame time: {} ms", Instant::now().duration_since(start_t).as_micros() as f64 / 1000.0);
+        println!(
+            "Frame time: {} ms",
+            Instant::now().duration_since(start_t).as_micros() as f64 / 1000.0
+        );
 
         // self.draw_tiles.sort_unstable_by(|a, b| {
         //     euclidean_distance_squared(b.pos, camera_pos)
@@ -776,7 +805,7 @@ impl EventHandler<ggez::GameError> for Katakomb {
                     // let color = tile.illumination_color;
                     let color = average_colors(tile_color, illumination_color);
                     let color_darkness = 1.0;
-                        // tile.illumination;
+                    // tile.illumination;
                     // let color_darkness =
                     //     (1.0 - screen_pos.z.min(1.0).max(0.0)) * 0.25 + tile.illumination * 0.75;
                     let color_back_darkness = color_darkness * 0.75;
@@ -855,8 +884,7 @@ impl Eq for DrawTile {}
 
 impl PartialEq for DrawTile {
     fn eq(&self, other: &Self) -> bool {
-        self.dist_from_eye == other.dist_from_eye
-        && self.tile.pos == other.tile.pos
+        self.dist_from_eye == other.dist_from_eye && self.tile.pos == other.tile.pos
     }
 }
 
@@ -868,7 +896,8 @@ impl PartialOrd for DrawTile {
 
 impl Ord for DrawTile {
     fn cmp(&self, other: &Self) -> Ordering {
-        FloatOrd(self.dist_from_eye).cmp(&FloatOrd(other.dist_from_eye))
+        FloatOrd(self.dist_from_eye)
+            .cmp(&FloatOrd(other.dist_from_eye))
             .then_with(|| FloatOrd(self.tile.pos.x).cmp(&FloatOrd(other.tile.pos.x)))
             .then_with(|| FloatOrd(self.tile.pos.y).cmp(&FloatOrd(other.tile.pos.y)))
             .then_with(|| FloatOrd(self.tile.pos.z).cmp(&FloatOrd(other.tile.pos.z)))
@@ -876,8 +905,13 @@ impl Ord for DrawTile {
     }
 }
 
-fn shadowcast_octant<F>(mut slice: ArrayViewMut3<Tile>, (x_sign, y_sign, z_sign): (bool, bool, bool), cast_range: usize, mut f: F) 
-    where F: FnMut(&mut Tile, (usize, usize, usize)) 
+fn shadowcast_octant<F>(
+    mut slice: ArrayViewMut3<Tile>,
+    (x_sign, y_sign, z_sign): (bool, bool, bool),
+    cast_range: usize,
+    mut f: F,
+) where
+    F: FnMut(&mut Tile, (usize, usize, usize)),
 {
     if !slice.is_empty() {
         if !x_sign {
@@ -920,8 +954,9 @@ struct Shadowcast {
     z: usize,
 }
 
-fn scan_recursive_shadowcast<F>(mut slice: ArrayViewMut3<Tile>, cast_range: usize, mut f: F) 
-    where F: FnMut(&mut Tile, (usize, usize, usize))
+fn scan_recursive_shadowcast<F>(mut slice: ArrayViewMut3<Tile>, cast_range: usize, mut f: F)
+where
+    F: FnMut(&mut Tile, (usize, usize, usize)),
 {
     let mut frontier = Vec::new();
 
@@ -979,13 +1014,13 @@ fn scan_recursive_shadowcast<F>(mut slice: ArrayViewMut3<Tile>, cast_range: usiz
                                 z: current.z + 1,
                             });
                         }
-                    }   
+                    }
 
                     continue 'y_loop;
                 }
 
                 let tile = &mut slice[[x, y, current.z]];
-                
+
                 f(tile, (x, y, current.z));
 
                 // If we're on the last layer, we don't worry about bookkeeping for recursion
@@ -1077,9 +1112,11 @@ fn scan_recursive_shadowcast<F>(mut slice: ArrayViewMut3<Tile>, cast_range: usiz
     }
 }
 
-fn split_shadowcast_octants<'a>(mut tile_array: ArrayViewMut3<'a, Tile>, origin: Point3<usize>, cast_range: usize)
-    -> [(ArrayViewMut3<'a, Tile>, (bool, bool, bool)); 8]
-{
+fn split_shadowcast_octants<'a>(
+    mut tile_array: ArrayViewMut3<'a, Tile>,
+    origin: Point3<usize>,
+    cast_range: usize,
+) -> [(ArrayViewMut3<'a, Tile>, (bool, bool, bool)); 8] {
     let (tiles_width, tiles_height, tiles_depth) = tile_array.dim();
 
     let light_left = origin.x.saturating_sub(cast_range);
@@ -1155,28 +1192,28 @@ fn split_shadowcast_octants<'a>(mut tile_array: ArrayViewMut3<'a, Tile>, origin:
 // }
 
 fn combine_light_colors(a: Color, b: Color) -> Color {
-    Color{
+    Color {
         r: a.r.max(b.r).min(1.0),
         g: a.g.max(b.g).min(1.0),
         b: a.b.max(b.b).min(1.0),
-        a: 1.0
+        a: 1.0,
     }
 }
 
 fn average_colors(a: Color, b: Color) -> Color {
-    Color{
+    Color {
         r: (a.r + b.r) / 2.0,
         g: (a.g + b.g) / 2.0,
         b: (a.b + b.b) / 2.0,
-        a: 1.0
+        a: 1.0,
     }
 }
 
 fn scale_color(color: Color, alpha: f32) -> Color {
-    Color{
+    Color {
         r: color.r * alpha,
         g: color.g * alpha,
         b: color.b * alpha,
-        a: 1.0
+        a: 1.0,
     }
 }

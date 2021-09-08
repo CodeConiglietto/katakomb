@@ -83,8 +83,8 @@ pub fn gen_tile(gen_package: &ChunkGenPackage, x: usize, y: usize, z: usize) -> 
         ])
         .abs();
 
-    let weights_total = simplex_raw_weight + 
-        perlin_raw_weight + 
+    let weights_total = simplex_raw_weight +
+        perlin_raw_weight +
         // worley_raw_weight + 
         value_raw_weight;
 
