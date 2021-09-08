@@ -25,7 +25,7 @@ use ggez::{
     GameResult,
 };
 use log::info;
-use na::{Isometry3, Matrix4, Perspective3, Point2, Point3, Rotation3, Unit, Vector3};
+use na::{Isometry3, Matrix4, Perspective3, Point2, Point3, Rotation3, Unit, Vector2, Vector3};
 use ndarray::arr2;
 use ndarray::prelude::*;
 use noise::{OpenSimplex, Perlin, Seedable, Value, Worley};
@@ -219,6 +219,7 @@ impl Item {
     }
     
     pub fn primary_use(&mut self) {
+        println!("primary item use");
         match self {
             Self::Weapon {
                 mut gun_timer,
@@ -303,13 +304,16 @@ impl Item {
                 }
             }
         }
-    }pub fn secondary_use(&mut self) {
+    }
+    
+    pub fn secondary_use(&mut self) {
+        println!("secondary item use");
         match self {
             Self::Weapon {
-                mut ads,
+                ref mut ads,
                 ..
             } => {
-                ads = (ads + 0.1).min(1.0);
+                *ads = (*ads + 0.1).min(1.0);
             }
         }
     }
@@ -443,106 +447,6 @@ impl Katakomb {
     }
 }
 
-//Tries to fire a bresenham hitscan, returns dest if no collisions
-fn _try_bresenham_hitscan(
-    tile_array: ArrayView3<Tile>,
-    src: Point3<i32>,
-    dest: Point3<i32>,
-) -> Point3<i32> {
-    if src.x >= 0
-        && src.x < CHUNK_SIZE as i32
-        && src.y >= 0
-        && src.y < CHUNK_SIZE as i32
-        && src.z >= 0
-        && src.z < CHUNK_SIZE as i32
-    {
-        for ray_point in calculate_bresenham(src, dest) {
-            let ray_tile = tile_array[[
-                ray_point.x as usize,
-                ray_point.y as usize,
-                ray_point.z as usize,
-            ]]
-            .clone();
-
-            if ray_point.x >= 0
-                && ray_point.x < CHUNK_SIZE as i32
-                && ray_point.y >= 0
-                && ray_point.y < CHUNK_SIZE as i32
-                && ray_point.z >= 0
-                && ray_point.z < CHUNK_SIZE as i32
-            {
-                if !ray_tile.tile_type.is_transparent() {
-                    return ray_point;
-                }
-            }
-        }
-    } else {
-        return src;
-    }
-
-    return dest;
-}
-
-//Tries to fire a floating point hitscan, returns dest if no collisions
-//This assumes that whatever is being scanned against is in an evenly spaced grid of tile size 1*1*1
-fn _try_ray_hitscan(
-    tile_array: ArrayView3<Tile>,
-    src: Point3<f32>,
-    dest: Point3<f32>,
-) -> Point3<f32> {
-    if is_in_array(tile_array, world_pos_to_index(src)) {
-        let distance = euclidean_distance_squared(src, dest).sqrt();
-        let distance_ratios = Point3::new(
-            (dest.x - src.x) / distance,
-            (dest.y - src.y) / distance,
-            (dest.z - src.z) / distance,
-        );
-
-        let mut ray_point = src.clone();
-
-        ray_point.x += distance_ratios.x;
-        ray_point.y += distance_ratios.y;
-        ray_point.z += distance_ratios.z;
-
-        for _i in 0..distance.floor() as i32 - 1 {
-            let ray_int_point = Point3::new(
-                ray_point.x as usize,
-                ray_point.y as usize,
-                ray_point.z as usize,
-            );
-
-            if is_in_array(tile_array, world_pos_to_index(ray_point)) {
-                let ray_tile = &tile_array[[ray_int_point.x, ray_int_point.y, ray_int_point.z]];
-
-                if !ray_tile.tile_type.is_transparent() {
-                    return ray_point;
-                }
-            }
-
-            ray_point.x += distance_ratios.x;
-            ray_point.y += distance_ratios.y;
-            ray_point.z += distance_ratios.z;
-        }
-    } else {
-        return src;
-    }
-
-    return dest;
-}
-
-fn _get_cube_points(pos: Point3<f32>) -> Vec<Point3<f32>> {
-    vec![
-        Point3::new(pos.x - 0.0, pos.y - 0.0, pos.z - 0.0),
-        Point3::new(pos.x - 0.0, pos.y - 0.0, pos.z + 0.9),
-        Point3::new(pos.x - 0.0, pos.y + 0.9, pos.z - 0.0),
-        Point3::new(pos.x - 0.0, pos.y + 0.9, pos.z + 0.9),
-        Point3::new(pos.x + 0.9, pos.y - 0.0, pos.z - 0.0),
-        Point3::new(pos.x + 0.9, pos.y - 0.0, pos.z + 0.9),
-        Point3::new(pos.x + 0.9, pos.y + 0.9, pos.z - 0.0),
-        Point3::new(pos.x + 0.9, pos.y + 0.9, pos.z + 0.9),
-    ]
-}
-
 impl EventHandler<ggez::GameError> for Katakomb {
     fn update(&mut self, ctx: &mut Context) -> GameResult<()> {
         let start_t = Instant::now();
@@ -556,9 +460,13 @@ impl EventHandler<ggez::GameError> for Katakomb {
             WINDOW_HEIGHT / 2.0, //We need to negate this, as 2d screen space is inverse of normalised device coords
         ].into();
 
-        // let mouse_delta: Point2<f32> = (screen_center - Point2::<f32>::from(mouse::position(ctx))).into();
+        let mouse_pos = mouse::position(ctx);
+        let mouse_delta: Point2<f32> = Point2::new(screen_center.x - mouse_pos.x, screen_center.y - mouse_pos.y).into();
 
-        // mouse::set_position(ctx, screen_center).unwrap();
+        // let mouse_delta = mouse::delta(&ctx);
+        mouse::set_position(ctx, screen_center).unwrap();
+
+        self.player.facing = self.player.facing + Vector2::new(mouse_delta.x * 0.001, mouse_delta.y * -0.001);
 
         let mut muzzle_flash = false;
 
@@ -574,18 +482,18 @@ impl EventHandler<ggez::GameError> for Katakomb {
             self.player.equipped_item.primary_use();    
         }
         
-        if keyboard::is_key_pressed(ctx, KeyCode::Left) {
-            self.player.facing.x += 0.025;
-        }
-        if keyboard::is_key_pressed(ctx, KeyCode::Right) {
-            self.player.facing.x -= 0.025;
-        }
-        if keyboard::is_key_pressed(ctx, KeyCode::Up) {
-            self.player.facing.y -= 0.025;
-        }
-        if keyboard::is_key_pressed(ctx, KeyCode::Down) {
-            self.player.facing.y += 0.025;
-        }
+        // if keyboard::is_key_pressed(ctx, KeyCode::Left) {
+        //     self.player.facing.x += 0.025;
+        // }
+        // if keyboard::is_key_pressed(ctx, KeyCode::Right) {
+        //     self.player.facing.x -= 0.025;
+        // }
+        // if keyboard::is_key_pressed(ctx, KeyCode::Up) {
+        //     self.player.facing.y -= 0.025;
+        // }
+        // if keyboard::is_key_pressed(ctx, KeyCode::Down) {
+        //     self.player.facing.y += 0.025;
+        // }
 
         if mouse::button_pressed(ctx, mouse::MouseButton::Right) {
             self.player.equipped_item.secondary_use();
@@ -844,7 +752,7 @@ impl EventHandler<ggez::GameError> for Katakomb {
                     let illumination_color = tile.illumination_color;
                     // let color = tile.illumination_color;
                     let color = average_colors(tile_color, illumination_color);
-                    let color_darkness = 1.0;
+                    let color_darkness = color_max(&color);
                     // tile.illumination;
                     // let color_darkness =
                     //     (1.0 - screen_pos.z.min(1.0).max(0.0)) * 0.25 + tile.illumination * 0.75;
@@ -854,6 +762,8 @@ impl EventHandler<ggez::GameError> for Katakomb {
                         screen_pos.x * WINDOW_WIDTH / 2.0 + WINDOW_WIDTH / 2.0,
                         -screen_pos.y * WINDOW_HEIGHT / 2.0 + WINDOW_HEIGHT / 2.0, //We need to negate this, as 2d screen space is inverse of normalised device coords
                     ];
+
+                    let color_value = 1.0;//color_value(&color).sqrt();
 
                     if !tile.tile_type.is_transparent() {
                         sprite_batch.add(
@@ -868,7 +778,7 @@ impl EventHandler<ggez::GameError> for Katakomb {
                                     r: color.r * color_back_darkness,
                                     g: color.g * color_back_darkness,
                                     b: color.b * color_back_darkness,
-                                    a: 1.0,
+                                    a: color_value,
                                 })
                                 .offset([0.5, 0.5]), // ..DrawParam::default()
                         );
@@ -886,7 +796,7 @@ impl EventHandler<ggez::GameError> for Katakomb {
                                 r: color.r * color_darkness,
                                 g: color.g * color_darkness,
                                 b: color.b * color_darkness,
-                                a: 1.0,
+                                a: color_value,
                             })
                             .offset([0.5, 0.5]), // ..DrawParam::default()
                     );
@@ -1246,4 +1156,16 @@ fn scale_color(color: Color, alpha: f32) -> Color {
         b: color.b * alpha,
         a: 1.0,
     }
+}
+
+fn color_value(color: &Color) -> f32 {
+        (color.r +
+        color.g +
+        color.b) / 3.0
+}
+
+fn color_max(color: &Color) -> f32 {
+        color.r.max(
+        color.g).max(
+        color.b)
 }

@@ -28,8 +28,8 @@ pub fn draw_player_weapon(
 
             let mut tile_offset =
                 rotation.transform_point(&gun_rotation.transform_point(&Point3::new(
-                    -player_ads,
-                    y as f32 * player_gun_scale,
+                    -1.0 + player_ads,
+                    1.0 + y as f32 * player_gun_scale,
                     (player_gun_model.dim().1 - x) as f32 * player_gun_scale * 0.75
                         + (0.5 - player_gun_recoil),
                 )));

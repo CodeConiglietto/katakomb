@@ -13,7 +13,7 @@ debug = true
 ggez = "0.6.0"
 noise = "0.6.0"
 ndarray = { version = "0.13.1", features = ["rayon", "serde"] }
-na = { version = "0.29.0", package = "nalgebra" }
+na = { version = "0.29.0", package = "nalgebra", features = ["convert-mint"] }
 rand = "0.7.3"
 rayon = "1.3.0"
 rodio = "0.14.0"
