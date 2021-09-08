@@ -6,8 +6,7 @@ use std::{
 use flo_binding::{bind, Binding, Bound, MutableBound};
 use ggez::{
     input::mouse::{self, MouseButton},
-    Context,
-    mint,
+    mint, Context,
 };
 use log::trace;
 
@@ -457,7 +456,7 @@ impl<T: Element> Padding<T> {
     }
 }
 
-impl<T: Element> Padding<T> {
+impl<T: Element> Element for Padding<T> {
     fn layout(&mut self, constraints: BoxConstraints) -> Size {
         trace!("Padding relayout");
 
@@ -1168,6 +1167,15 @@ impl Element for Filling {
     }
 
     fn handle_event(&mut self, ctx: &mut UiContext, event: Event, bounds: IRect) -> EventResult {
+        match event {
+            Event::Draw => {
+                for p in bounds.points() {
+                    ctx.batch.add(&self.voxel, p);
+                }
+            }
+            _ => {}
+        }
+
         Ok(Continue)
     }
 }
