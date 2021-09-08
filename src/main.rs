@@ -25,31 +25,34 @@ use ggez::{
     GameResult,
 };
 use log::info;
-use na::{Isometry3, Matrix4, Perspective3, Point2, Point3, Rotation3, Unit, Vector2, Vector3};
+use na::{
+    Isometry3, Matrix4, Perspective3, Point2, Point3, Rotation3, Unit, UnitVector3, Vector2,
+    Vector3,
+};
 use ndarray::arr2;
 use ndarray::prelude::*;
 use noise::{OpenSimplex, Perlin, Seedable, Value, Worley};
 use rand::prelude::*;
 use rayon::prelude::*;
 use rodio::{OutputStream, Source};
-use structopt::StructOpt;
 use specs::prelude::*;
+use structopt::StructOpt;
 
 use crate::{
+    components::{position::*, velocity::*},
     constants::*,
-    components::{velocity::*, position::*},
     generation::world::*,
     geometry::util::*,
     rendering::{drawable::Drawable, font::*, light::*, tile::*},
-    systems::{physics_system::*},
+    systems::physics_system::*,
     util::*,
     world::util::*,
 };
 
 mod audio;
+mod components;
 mod constants;
 mod editor;
-mod components;
 mod generation;
 mod geometry;
 mod rendering;
@@ -121,8 +124,6 @@ fn main() -> Fallible<()> {
             event::run(ctx, event_loop, handler);
         }
     }
-
-    Ok(())
 }
 
 struct Player {
@@ -137,11 +138,11 @@ struct Player {
 
 impl Player {
     pub fn draw_equipped(
-        &self, 
-        font: &KataFont, 
-        mvp: Matrix4<f32>, 
-        rotation: Rotation3<f32>, 
-        mut item_sprite_batch: &mut SpriteBatch
+        &self,
+        font: &KataFont,
+        mvp: Matrix4<f32>,
+        rotation: Rotation3<f32>,
+        mut item_sprite_batch: &mut SpriteBatch,
     ) {
         match &self.equipped_item {
             Item::Weapon {
@@ -169,18 +170,13 @@ impl Player {
     pub fn update_equipped(&mut self) {
         match &self.equipped_item {
             Item::Weapon {
-                mut gun_rotation,
-                ..
+                mut gun_rotation, ..
             } => {
-                let gun_rotation = Rotation3::from_euler_angles(
-                    -gun_rotation.y,
-                    gun_rotation.x,
-                    0.0,
-                );
-        
-                let view_rotation =
-                    Rotation3::from_euler_angles(self.facing.y, self.facing.x, 0.0);
-        
+                let gun_rotation =
+                    Rotation3::from_euler_angles(-gun_rotation.y, gun_rotation.x, 0.0);
+
+                let view_rotation = Rotation3::from_euler_angles(self.facing.y, self.facing.x, 0.0);
+
                 let gun_facing = view_rotation
                     .transform_point(&gun_rotation.transform_point(&Point3::new(0.0, 0.0, 1.0)));
             }
@@ -189,10 +185,10 @@ impl Player {
 }
 
 enum Item {
-    Weapon{
+    Weapon {
         gun_model: Array2<TileType>,
         gun_timer: u8,
-    
+
         ads: f32,
         gun_recoil: f32,
         gun_rotation: Point2<f32>,
@@ -217,7 +213,7 @@ impl Item {
             }
         }
     }
-    
+
     pub fn primary_use(&mut self) {
         println!("primary item use");
         match self {
@@ -229,30 +225,29 @@ impl Item {
             } => {
                 if gun_timer == 0 {
                     gun_recoil = (gun_recoil + 0.2).min(1.0);
-                    gun_rotation.x = (gun_rotation.x
-                        + (thread_rng().gen::<f32>() - 0.5) * 0.05)
+                    gun_rotation.x = (gun_rotation.x + (thread_rng().gen::<f32>() - 0.5) * 0.05)
                         .min(1.0)
                         .max(-1.0);
                     gun_rotation.y = (gun_rotation.y + 0.05).min(1.0);
-    
+
                     // // dbg!(std::env::current_dir().unwrap().to_str().unwrap());
                     // let (_stream, stream_handle) = OutputStream::try_default().unwrap();
                     // // let device = rodio::default_output_device().unwrap();
                     // let file = File::open(r"resources/gunshot.wav").unwrap();
                     // let source = rodio::Decoder::new(BufReader::new(file)).unwrap();
-    
+
                     // let mut echo_distances = Vec::new();
-    
+
                     // for cube_point in get_cube_points(Point3::new(-0.5, -0.5, -0.5)) {
                     //     let ray_target = self.player.pos + (cube_point.coords * MAX_SOUND_RANGE * 2.0);
-    
+
                     //     if is_in_array(self.tile_array.view(), world_pos_to_index(ray_target)) {
                     //         let ray_hit = try_bresenham_hitscan(
                     //             self.tile_array.view(),
                     //             world_pos_to_int(self.player.pos),
                     //             world_pos_to_int(ray_target),
                     //         );
-    
+
                     //         if ray_hit != world_pos_to_int(ray_target) {
                     //             // //TODO mess with this
                     //             let hit_distance = euclidean_distance_squared(
@@ -272,12 +267,12 @@ impl Item {
                     //         }
                     //     }
                     // }
-    
+
                     // echo_distances.sort_by(|a, b| a.partial_cmp(b).unwrap());
                     // let min_echo_distance = echo_distances.first().unwrap();
                     // // let med_echo_distance = echo_distances[echo_distances.len() /2 ];
                     // let max_echo_distance = echo_distances.last().unwrap();
-    
+
                     // //warning: using more than 2 reverbs leads to very unpleasant results :<
                     // stream_handle
                     //     .play_raw(
@@ -299,20 +294,17 @@ impl Item {
                     //             .convert_samples(),
                     //     )
                     //     .unwrap();
-    
+
                     gun_timer = 12;
                 }
             }
         }
     }
-    
+
     pub fn secondary_use(&mut self) {
         println!("secondary item use");
         match self {
-            Self::Weapon {
-                ref mut ads,
-                ..
-            } => {
+            Self::Weapon { ref mut ads, .. } => {
                 *ads = (*ads + 0.1).min(1.0);
             }
         }
@@ -458,15 +450,18 @@ impl EventHandler<ggez::GameError> for Katakomb {
         let screen_center: Point2<f32> = [
             WINDOW_WIDTH / 2.0,
             WINDOW_HEIGHT / 2.0, //We need to negate this, as 2d screen space is inverse of normalised device coords
-        ].into();
+        ]
+        .into();
 
         let mouse_pos = mouse::position(ctx);
-        let mouse_delta: Point2<f32> = Point2::new(screen_center.x - mouse_pos.x, screen_center.y - mouse_pos.y).into();
+        let mouse_delta: Point2<f32> =
+            Point2::new(screen_center.x - mouse_pos.x, screen_center.y - mouse_pos.y).into();
 
         // let mouse_delta = mouse::delta(&ctx);
         mouse::set_position(ctx, screen_center).unwrap();
 
-        self.player.facing = self.player.facing + Vector2::new(mouse_delta.x * 0.001, mouse_delta.y * -0.001);
+        self.player.facing =
+            self.player.facing + Vector2::new(mouse_delta.x * 0.001, mouse_delta.y * -0.001);
 
         let mut muzzle_flash = false;
 
@@ -479,9 +474,9 @@ impl EventHandler<ggez::GameError> for Katakomb {
             Rotation3::from_axis_angle(&Vector3::y_axis(), self.player.facing.x);
 
         if mouse::button_pressed(ctx, mouse::MouseButton::Left) {
-            self.player.equipped_item.primary_use();    
+            self.player.equipped_item.primary_use();
         }
-        
+
         // if keyboard::is_key_pressed(ctx, KeyCode::Left) {
         //     self.player.facing.x += 0.025;
         // }
@@ -645,16 +640,24 @@ impl EventHandler<ggez::GameError> for Katakomb {
 
                 //TODO: clean up euclidean distance cleanup by storing a usize position in a tile instead of a f32 one
                 octs.iter_mut().for_each(|o| {
-                    shadowcast_octant(o.0.view_mut(), o.1, LIGHT_RANGE, |t, (x, y, z)| {
-                        t.illumination_color = combine_light_colors(
-                            scale_color(
-                                light_color,
-                                1.0 - (EUCLIDEAN_DISTANCE_LOOKUP[[x, y, z]] / LIGHT_RANGE as f32)
-                                    .min(1.0),
-                            ),
-                            t.illumination_color,
-                        );
-                    })
+                    shadowcast_octant(
+                        o.0.view_mut(),
+                        o.1,
+                        LIGHT_RANGE,
+                        LightShape::Sphere,
+                        Point3::new(light.0.x as f32, light.0.y as f32, light.0.z as f32),
+                        |t, (x, y, z)| {
+                            t.illumination_color = combine_light_colors(
+                                scale_color(
+                                    light_color,
+                                    1.0 - (EUCLIDEAN_DISTANCE_LOOKUP[[x, y, z]]
+                                        / LIGHT_RANGE as f32)
+                                        .min(1.0),
+                                ),
+                                t.illumination_color,
+                            );
+                        },
+                    )
                 });
                 // octs.iter_mut().for_each(|o| shadowcast_octant(o.0.view_mut(), o.1));
             }
@@ -670,14 +673,21 @@ impl EventHandler<ggez::GameError> for Katakomb {
         );
 
         fov_octs.iter_mut().for_each(|o| {
-            shadowcast_octant(o.0.view_mut(), o.1, PLAYER_SIGHT_RANGE, |t, (x, y, z)| {
-                if !t.tile_type.is_transparent() && t.illuminated() {
-                    dt.insert(DrawTile {
-                        tile: t.clone(),
-                        dist_from_eye: EUCLIDEAN_DISTANCE_LOOKUP[[x, y, z]],
-                    });
-                }
-            })
+            shadowcast_octant(
+                o.0.view_mut(),
+                o.1,
+                PLAYER_SIGHT_RANGE,
+                LightShape::Sphere,
+                camera_pos,
+                |t, (x, y, z)| {
+                    if !t.tile_type.is_transparent() && t.illuminated() {
+                        dt.insert(DrawTile {
+                            tile: t.clone(),
+                            dist_from_eye: EUCLIDEAN_DISTANCE_LOOKUP[[x, y, z]],
+                        });
+                    }
+                },
+            )
         });
 
         println!("Draw tiles len: {}", self.draw_tiles.len());
@@ -763,7 +773,7 @@ impl EventHandler<ggez::GameError> for Katakomb {
                         -screen_pos.y * WINDOW_HEIGHT / 2.0 + WINDOW_HEIGHT / 2.0, //We need to negate this, as 2d screen space is inverse of normalised device coords
                     ];
 
-                    let color_value = 1.0;//color_value(&color).sqrt();
+                    let color_value = 1.0; //color_value(&color).sqrt();
 
                     if !tile.tile_type.is_transparent() {
                         sprite_batch.add(
@@ -807,7 +817,12 @@ impl EventHandler<ggez::GameError> for Katakomb {
 
         let mut item_sprite_batch = SpriteBatch::new(self.font.texture().clone());
 
-        self.player.draw_equipped(&self.font, model_view_projection, rotation, &mut item_sprite_batch);
+        self.player.draw_equipped(
+            &self.font,
+            model_view_projection,
+            rotation,
+            &mut item_sprite_batch,
+        );
 
         ggez::graphics::draw(ctx, &item_sprite_batch, DrawParam::default())?;
 
@@ -849,6 +864,8 @@ fn shadowcast_octant<F>(
     mut slice: ArrayViewMut3<Tile>,
     (x_sign, y_sign, z_sign): (bool, bool, bool),
     cast_range: usize,
+    shape: LightShape,
+    source_pos: Point3<f32>,
     mut f: F,
 ) where
     F: FnMut(&mut Tile, (usize, usize, usize)),
@@ -869,7 +886,7 @@ fn shadowcast_octant<F>(
                 .view_mut()
                 .permuted_axes((i, (i + 1) % 3, (i + 2) % 3));
 
-            scan_recursive_shadowcast(permuted_slice, cast_range, &mut f);
+            scan_recursive_shadowcast(permuted_slice, cast_range, shape, source_pos, &mut f);
             // iterate_recursive_shadowcast(permuted_slice, 0.0, FRAC_PI_4, 0.0, FRAC_PI_4, 0);
 
             // let pslice_width = permuted_slice.dim().0;
@@ -885,6 +902,27 @@ fn shadowcast_octant<F>(
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+pub enum LightShape {
+    Sphere,
+    Cone {
+        facing: UnitVector3<f32>,
+        width_angle: f32,
+    },
+}
+
+impl LightShape {
+    fn contains(&self, pos: Point3<f32>) -> bool {
+        match self {
+            Self::Sphere => true,
+            Self::Cone {
+                facing,
+                width_angle,
+            } => facing.into_inner().angle(&pos.coords) < *width_angle,
+        }
+    }
+}
+
 #[derive(Debug)]
 struct Shadowcast {
     left_angle: f32,
@@ -894,8 +932,13 @@ struct Shadowcast {
     z: usize,
 }
 
-fn scan_recursive_shadowcast<F>(mut slice: ArrayViewMut3<Tile>, cast_range: usize, mut f: F)
-where
+fn scan_recursive_shadowcast<F>(
+    mut slice: ArrayViewMut3<Tile>,
+    cast_range: usize,
+    shape: LightShape,
+    source_pos: Point3<f32>,
+    mut f: F,
+) where
     F: FnMut(&mut Tile, (usize, usize, usize)),
 {
     let mut frontier = Vec::new();
@@ -961,11 +1004,15 @@ where
 
                 let tile = &mut slice[[x, y, current.z]];
 
-                f(tile, (x, y, current.z));
+                let in_shape = shape.contains(Point3::from(tile.pos - source_pos));
+
+                if in_shape {
+                    f(tile, (x, y, current.z));
+                }
 
                 // If we're on the last layer, we don't worry about bookkeeping for recursion
                 if current.z < slice_depth - 1 {
-                    if tile.tile_type.is_transparent() {
+                    if tile.tile_type.is_transparent() && in_shape {
                         last_left = Some(last_left.unwrap_or(x));
                     } else {
                         let tile_top_angle = ATAN_CASTING_LOOKUP[[y, current.z]];
@@ -1159,13 +1206,9 @@ fn scale_color(color: Color, alpha: f32) -> Color {
 }
 
 fn color_value(color: &Color) -> f32 {
-        (color.r +
-        color.g +
-        color.b) / 3.0
+    (color.r + color.g + color.b) / 3.0
 }
 
 fn color_max(color: &Color) -> f32 {
-        color.r.max(
-        color.g).max(
-        color.b)
+    color.r.max(color.g).max(color.b)
 }
