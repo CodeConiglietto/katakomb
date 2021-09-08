@@ -325,6 +325,8 @@ struct Katakomb {
     lights: Vec<(Point3<usize>, Color)>,
 
     current_tic: u64,
+
+    mouse_pos: ggez::mint::Point2<f32>,
     // lights: Vec<Light>,
     // light_noise: OpenSimplex,
     // player_gun_sound: SoundData,
@@ -336,6 +338,8 @@ impl Katakomb {
         // Load/create resources such as images here.
         // let noise = OpenSimplex::new().set_seed(thread_rng().gen::<u32>());
         // let meta_noise = OpenSimplex::new().set_seed(thread_rng().gen::<u32>());
+
+        ggez::input::mouse::set_cursor_grabbed(ctx, true);
 
         let chunk_gen_package = ChunkGenPackage {
             simplex: OpenSimplex::new().set_seed(thread_rng().gen::<u32>()),
@@ -431,6 +435,11 @@ impl Katakomb {
             nuke_lighting: false,
             lights,
             current_tic: 0,
+            mouse_pos: [
+                WINDOW_WIDTH / 2.0,
+                WINDOW_HEIGHT / 2.0,
+            ]
+            .into()
             // lights: Vec::new(),
             // light_noise: OpenSimplex::new(),
             // player_gun_sound: SoundData::new(ctx, r"/gunshot.wav").unwrap(),
@@ -447,21 +456,27 @@ impl EventHandler<ggez::GameError> for Katakomb {
         // self.physics_system.run_now(&self.ecs_world);
         // self.ecs_world.maintain();
 
+        let (screen_width, screen_height) = graphics::drawable_size(ctx);
+
         let screen_center: Point2<f32> = [
-            WINDOW_WIDTH / 2.0,
-            WINDOW_HEIGHT / 2.0, //We need to negate this, as 2d screen space is inverse of normalised device coords
+            screen_width / 2.0,
+            screen_height / 2.0,
         ]
         .into();
 
-        let mouse_pos = mouse::position(ctx);
-        let mouse_delta: Point2<f32> =
-            Point2::new(screen_center.x - mouse_pos.x, screen_center.y - mouse_pos.y).into();
-
-        // let mouse_delta = mouse::delta(&ctx);
+        // let old_mouse_pos = self.mouse_pos;
+        // self.mouse_pos = mouse::position(ctx);
         mouse::set_position(ctx, screen_center).unwrap();
 
+        // let mouse_delta: Point2<f32> =
+        //     Point2::new(old_mouse_pos.x - self.mouse_pos.x, old_mouse_pos.y - self.mouse_pos.y).into();
+
+        // self.mouse_pos = mouse::position(ctx);
+
+        let mouse_delta = mouse::delta(&ctx);
+
         self.player.facing =
-            self.player.facing + Vector2::new(mouse_delta.x * 0.001, mouse_delta.y * -0.001);
+            self.player.facing + Vector2::new(mouse_delta.x * -0.0025, mouse_delta.y * 0.0025);
 
         let mut muzzle_flash = false;
 
