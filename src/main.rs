@@ -25,7 +25,7 @@ use ggez::{
     GameResult,
 };
 use log::info;
-use na::{Isometry3, Perspective3, Point2, Point3, Rotation3, Unit, Vector3};
+use na::{Isometry3, Matrix4, Perspective3, Point2, Point3, Rotation3, Unit, Vector3};
 use ndarray::arr2;
 use ndarray::prelude::*;
 use noise::{OpenSimplex, Perlin, Seedable, Value, Worley};
@@ -130,14 +130,189 @@ struct Player {
     vel: Vector3<f32>,
     facing: Point2<f32>,
 
-    gun_model: Array2<TileType>,
-    gun_timer: u8,
-
-    ads: f32,
-    gun_recoil: f32,
-    gun_rotation: Point2<f32>,
-
     crouching: bool,
+
+    equipped_item: Item,
+}
+
+impl Player {
+    pub fn draw_equipped(
+        &self, 
+        font: &KataFont, 
+        mvp: Matrix4<f32>, 
+        rotation: Rotation3<f32>, 
+        mut item_sprite_batch: &mut SpriteBatch
+    ) {
+        match &self.equipped_item {
+            Item::Weapon {
+                gun_model,
+                gun_timer,
+                ads,
+                gun_recoil,
+                gun_rotation,
+            } => {
+                rendering::util::draw_player_weapon(
+                    &mut item_sprite_batch,
+                    &font,
+                    mvp,
+                    self.pos,
+                    rotation,
+                    &gun_model,
+                    *ads,
+                    *gun_recoil,
+                    *gun_rotation,
+                );
+            }
+        }
+    }
+
+    pub fn update_equipped(&mut self) {
+        match &self.equipped_item {
+            Item::Weapon {
+                mut gun_rotation,
+                ..
+            } => {
+                let gun_rotation = Rotation3::from_euler_angles(
+                    -gun_rotation.y,
+                    gun_rotation.x,
+                    0.0,
+                );
+        
+                let view_rotation =
+                    Rotation3::from_euler_angles(self.facing.y, self.facing.x, 0.0);
+        
+                let gun_facing = view_rotation
+                    .transform_point(&gun_rotation.transform_point(&Point3::new(0.0, 0.0, 1.0)));
+            }
+        }
+    }
+}
+
+enum Item {
+    Weapon{
+        gun_model: Array2<TileType>,
+        gun_timer: u8,
+    
+        ads: f32,
+        gun_recoil: f32,
+        gun_rotation: Point2<f32>,
+    },
+}
+
+impl Item {
+    pub fn update(&mut self) {
+        match self {
+            Self::Weapon {
+                ref mut gun_timer,
+                ref mut ads,
+                ref mut gun_recoil,
+                ref mut gun_rotation,
+                ..
+            } => {
+                *gun_recoil *= 0.95;
+                gun_rotation.x *= 0.95;
+                gun_rotation.y *= 0.95;
+                *gun_timer -= 1;
+                *ads *= 0.9; //(self.player.ads - 0.1).max(0.0);
+            }
+        }
+    }
+    
+    pub fn primary_use(&mut self) {
+        match self {
+            Self::Weapon {
+                mut gun_timer,
+                mut gun_recoil,
+                mut gun_rotation,
+                ..
+            } => {
+                if gun_timer == 0 {
+                    gun_recoil = (gun_recoil + 0.2).min(1.0);
+                    gun_rotation.x = (gun_rotation.x
+                        + (thread_rng().gen::<f32>() - 0.5) * 0.05)
+                        .min(1.0)
+                        .max(-1.0);
+                    gun_rotation.y = (gun_rotation.y + 0.05).min(1.0);
+    
+                    // // dbg!(std::env::current_dir().unwrap().to_str().unwrap());
+                    // let (_stream, stream_handle) = OutputStream::try_default().unwrap();
+                    // // let device = rodio::default_output_device().unwrap();
+                    // let file = File::open(r"resources/gunshot.wav").unwrap();
+                    // let source = rodio::Decoder::new(BufReader::new(file)).unwrap();
+    
+                    // let mut echo_distances = Vec::new();
+    
+                    // for cube_point in get_cube_points(Point3::new(-0.5, -0.5, -0.5)) {
+                    //     let ray_target = self.player.pos + (cube_point.coords * MAX_SOUND_RANGE * 2.0);
+    
+                    //     if is_in_array(self.tile_array.view(), world_pos_to_index(ray_target)) {
+                    //         let ray_hit = try_bresenham_hitscan(
+                    //             self.tile_array.view(),
+                    //             world_pos_to_int(self.player.pos),
+                    //             world_pos_to_int(ray_target),
+                    //         );
+    
+                    //         if ray_hit != world_pos_to_int(ray_target) {
+                    //             // //TODO mess with this
+                    //             let hit_distance = euclidean_distance_squared(
+                    //                 self.player.pos,
+                    //                 Point3::new(ray_hit.x as f32, ray_hit.y as f32, ray_hit.z as f32),
+                    //             )
+                    //             .sqrt();
+                    //             let hit_distance_ratio = hit_distance / (MAX_SOUND_RANGE * 2.0);
+                    //             let hit_distance_ratio_squared = hit_distance * hit_distance;
+                    //             echo_distances.push(hit_distance_ratio);
+                    //             // let mut source = Source::from_data(ctx, self.player_gun_sound.clone()).unwrap();
+                    //             // source.set_pitch(0.5 + 0.5 * (1.0 - hit_distance_ratio));
+                    //             // source.set_fade_in(Duration::from_millis((hit_distance_ratio_squared) as u64));
+                    //             // //source.set_volume(1.0 - (hit_distance_ratio * 0.5));
+                    //             // self.sound_queue.push((update_time + (hit_distance_ratio * 0.5) as f64, source));
+                    //             // //TODO take average of hit distances and use that to change the non-ray sound's pitch
+                    //         }
+                    //     }
+                    // }
+    
+                    // echo_distances.sort_by(|a, b| a.partial_cmp(b).unwrap());
+                    // let min_echo_distance = echo_distances.first().unwrap();
+                    // // let med_echo_distance = echo_distances[echo_distances.len() /2 ];
+                    // let max_echo_distance = echo_distances.last().unwrap();
+    
+                    // //warning: using more than 2 reverbs leads to very unpleasant results :<
+                    // stream_handle
+                    //     .play_raw(
+                    //         source
+                    //             .convert_samples::<i16>()
+                    //             .buffered()
+                    //             .reverb(
+                    //                 Duration::from_millis((min_echo_distance * 1000.0) as u64),
+                    //                 0.5 - min_echo_distance * 0.5,
+                    //             )
+                    //             // .reverb(
+                    //             //     Duration::from_millis((med_echo_distance * 750.0) as u64),
+                    //             //     0.5 - med_echo_distance * 0.5,
+                    //             // )
+                    //             .reverb(
+                    //                 Duration::from_millis((max_echo_distance * 1250.0) as u64),
+                    //                 0.25 - max_echo_distance * 0.25,
+                    //             )
+                    //             .convert_samples(),
+                    //     )
+                    //     .unwrap();
+    
+                    gun_timer = 12;
+                }
+            }
+        }
+    }pub fn secondary_use(&mut self) {
+        match self {
+            Self::Weapon {
+                mut ads,
+                ..
+            } => {
+                ads = (ads + 0.1).min(1.0);
+            }
+        }
+    }
 }
 
 struct Katakomb {
@@ -203,7 +378,7 @@ impl Katakomb {
                             tile.pos.y.floor() as i32,
                             tile.pos.z.floor() as i32,
                         ),
-                        |t| t.tile_type == TileType::Rock,
+                        |t| t.tile_type.collides(),
                     )
             })
             .map(|tile| {
@@ -237,22 +412,24 @@ impl Katakomb {
                 ),
                 vel: Vector3::new(0.0, 0.0, 0.0),
                 facing: Point2::origin(),
-                gun_recoil: 0.0,
-                gun_rotation: Point2::origin(),
-                gun_model: arr2(&[
-                    [
-                        Air, Air, FrontSight, Air, Air, Air, Air, RearSight, Air, Air, Air,
-                    ],
-                    [
-                        BarrelEnd, BarrelEnd, GasBlock, Barrel, Barrel, RecLower, RecLower,
-                        RecLower, Air, StockUpper, StockUpper,
-                    ],
-                    [
-                        Air, Air, Air, Air, Air, Air, Magazine, Grip, Stock, Stock, Stock,
-                    ],
-                ]),
-                gun_timer: 0,
-                ads: 0.0,
+                equipped_item: Item::Weapon {
+                    gun_recoil: 0.0,
+                    gun_rotation: Point2::origin(),
+                    gun_model: arr2(&[
+                        [
+                            Air, Air, FrontSight, Air, Air, Air, Air, RearSight, Air, Air, Air,
+                        ],
+                        [
+                            BarrelEnd, BarrelEnd, GasBlock, Barrel, Barrel, RecLower, RecLower,
+                            RecLower, Air, StockUpper, StockUpper,
+                        ],
+                        [
+                            Air, Air, Air, Air, Air, Air, Magazine, Grip, Stock, Stock, Stock,
+                        ],
+                    ]),
+                    gun_timer: 0,
+                    ads: 0.0,
+                },
                 crouching: false,
             },
             nuke_lighting: false,
@@ -267,7 +444,7 @@ impl Katakomb {
 }
 
 //Tries to fire a bresenham hitscan, returns dest if no collisions
-fn try_bresenham_hitscan(
+fn _try_bresenham_hitscan(
     tile_array: ArrayView3<Tile>,
     src: Point3<i32>,
     dest: Point3<i32>,
@@ -308,7 +485,7 @@ fn try_bresenham_hitscan(
 
 //Tries to fire a floating point hitscan, returns dest if no collisions
 //This assumes that whatever is being scanned against is in an evenly spaced grid of tile size 1*1*1
-fn try_ray_hitscan(
+fn _try_ray_hitscan(
     tile_array: ArrayView3<Tile>,
     src: Point3<f32>,
     dest: Point3<f32>,
@@ -353,7 +530,7 @@ fn try_ray_hitscan(
     return dest;
 }
 
-fn get_cube_points(pos: Point3<f32>) -> Vec<Point3<f32>> {
+fn _get_cube_points(pos: Point3<f32>) -> Vec<Point3<f32>> {
     vec![
         Point3::new(pos.x - 0.0, pos.y - 0.0, pos.z - 0.0),
         Point3::new(pos.x - 0.0, pos.y - 0.0, pos.z + 0.9),
@@ -366,188 +543,37 @@ fn get_cube_points(pos: Point3<f32>) -> Vec<Point3<f32>> {
     ]
 }
 
-fn hitscan_tile(
-    tile_array: ArrayView3<Tile>,
-    src: Point3<f32>,
-    dest: Point3<f32>,
-) -> Vec<Point3<f32>> {
-    let mut hits = Vec::new();
-
-    for target in get_cube_points(dest) {
-        let hit = try_ray_hitscan(tile_array, src, target);
-
-        if world_pos_to_index(hit) != world_pos_to_index(target) {
-            hits.push(hit);
-        }
-    }
-
-    hits
-}
-
-// fn get_tile_from_point(tile_array: ArrayView3<Tile>, pos: Point3::<f32>) -> Tile{
-
-// }
-
-fn get_light_hitscans(
-    light: &Light,
-    lighting_sphere: &Vec<Point3<f32>>,
-    tile_array: ArrayView3<Tile>,
-) -> Vec<Point3<f32>> {
-    let mut ray_hits = Vec::new();
-
-    // tile_array[[
-    //         light.pos.x.floor() as usize,
-    //         light.pos.y.floor() as usize,
-    //         light.pos.z.floor() as usize,
-    //     ]]
-    //     .illumination = 0.9;
-
-    let light_target: Point3<f32> = Point3::origin() + (light.facing * light.range).coords;
-
-    for target_point in lighting_sphere {
-        let target_point_offset = Point3::new(
-            target_point.x + light.pos.x + light_target.x,
-            target_point.y + light.pos.y + light_target.y,
-            target_point.z + light.pos.z + light_target.z,
-        );
-
-        ray_hits.append(&mut hitscan_tile(
-            tile_array,
-            light.pos,
-            target_point_offset,
-        ));
-    }
-
-    ray_hits
-}
-
-fn get_tile_at(pos: Point3<f32>, tile_array: &Array3<Tile>) -> Tile {
-    let index = world_pos_to_index(pos);
-
-    tile_array[[index.x, index.y, index.z]].clone()
-}
-
 impl EventHandler<ggez::GameError> for Katakomb {
     fn update(&mut self, ctx: &mut Context) -> GameResult<()> {
         let start_t = Instant::now();
 
         // Update code here...
-        self.physics_system.run_now(&self.ecs_world);
-        self.ecs_world.maintain();
+        // self.physics_system.run_now(&self.ecs_world);
+        // self.ecs_world.maintain();
 
         let screen_center: Point2<f32> = [
             WINDOW_WIDTH / 2.0,
             WINDOW_HEIGHT / 2.0, //We need to negate this, as 2d screen space is inverse of normalised device coords
         ].into();
 
-        let mouse_delta: Point2<f32> = (screen_center - Point2::<f32>::from(mouse::position(ctx))).into();
+        // let mouse_delta: Point2<f32> = (screen_center - Point2::<f32>::from(mouse::position(ctx))).into();
 
-        mouse::set_position(ctx, screen_center).unwrap();
+        // mouse::set_position(ctx, screen_center).unwrap();
 
         let mut muzzle_flash = false;
 
-        self.player.gun_recoil *= 0.95;
-        self.player.gun_rotation.x *= 0.95;
-        self.player.gun_rotation.y *= 0.95;
-
         let update_time = timer::duration_to_f64(timer::time_since_start(ctx));
+
+        self.player.equipped_item.update();
+        self.player.update_equipped();
 
         let movement_rotation =
             Rotation3::from_axis_angle(&Vector3::y_axis(), self.player.facing.x);
 
-        let gun_rotation = Rotation3::from_euler_angles(
-            -self.player.gun_rotation.y,
-            self.player.gun_rotation.x,
-            0.0,
-        );
-
-        let view_rotation =
-            Rotation3::from_euler_angles(self.player.facing.y, self.player.facing.x, 0.0);
-
-        let gun_facing = view_rotation
-            .transform_point(&gun_rotation.transform_point(&Point3::new(0.0, 0.0, 1.0)));
-
-        if self.player.gun_timer == 0 {
-            if mouse::button_pressed(ctx, mouse::MouseButton::Left) {
-                self.player.gun_recoil = (self.player.gun_recoil + 0.2).min(1.0);
-                self.player.gun_rotation.x = (self.player.gun_rotation.x
-                    + (thread_rng().gen::<f32>() - 0.5) * 0.05)
-                    .min(1.0)
-                    .max(-1.0);
-                self.player.gun_rotation.y = (self.player.gun_rotation.y + 0.05).min(1.0);
-
-                // dbg!(std::env::current_dir().unwrap().to_str().unwrap());
-                let (_stream, stream_handle) = OutputStream::try_default().unwrap();
-                // let device = rodio::default_output_device().unwrap();
-                let file = File::open(r"resources/gunshot.wav").unwrap();
-                let source = rodio::Decoder::new(BufReader::new(file)).unwrap();
-
-                let mut echo_distances = Vec::new();
-
-                for cube_point in get_cube_points(Point3::new(-0.5, -0.5, -0.5)) {
-                    let ray_target = self.player.pos + (cube_point.coords * MAX_SOUND_RANGE * 2.0);
-
-                    if is_in_array(self.tile_array.view(), world_pos_to_index(ray_target)) {
-                        let ray_hit = try_bresenham_hitscan(
-                            self.tile_array.view(),
-                            world_pos_to_int(self.player.pos),
-                            world_pos_to_int(ray_target),
-                        );
-
-                        if ray_hit != world_pos_to_int(ray_target) {
-                            // //TODO mess with this
-                            let hit_distance = euclidean_distance_squared(
-                                self.player.pos,
-                                Point3::new(ray_hit.x as f32, ray_hit.y as f32, ray_hit.z as f32),
-                            )
-                            .sqrt();
-                            let hit_distance_ratio = hit_distance / (MAX_SOUND_RANGE * 2.0);
-                            let hit_distance_ratio_squared = hit_distance * hit_distance;
-                            echo_distances.push(hit_distance_ratio);
-                            // let mut source = Source::from_data(ctx, self.player_gun_sound.clone()).unwrap();
-                            // source.set_pitch(0.5 + 0.5 * (1.0 - hit_distance_ratio));
-                            // source.set_fade_in(Duration::from_millis((hit_distance_ratio_squared) as u64));
-                            // //source.set_volume(1.0 - (hit_distance_ratio * 0.5));
-                            // self.sound_queue.push((update_time + (hit_distance_ratio * 0.5) as f64, source));
-                            // //TODO take average of hit distances and use that to change the non-ray sound's pitch
-                        }
-                    }
-                }
-
-                echo_distances.sort_by(|a, b| a.partial_cmp(b).unwrap());
-                let min_echo_distance = echo_distances.first().unwrap();
-                // let med_echo_distance = echo_distances[echo_distances.len() /2 ];
-                let max_echo_distance = echo_distances.last().unwrap();
-
-                //warning: using more than 2 reverbs leads to very unpleasant results :<
-                stream_handle
-                    .play_raw(
-                        source
-                            .convert_samples::<i16>()
-                            .buffered()
-                            .reverb(
-                                Duration::from_millis((min_echo_distance * 1000.0) as u64),
-                                0.5 - min_echo_distance * 0.5,
-                            )
-                            // .reverb(
-                            //     Duration::from_millis((med_echo_distance * 750.0) as u64),
-                            //     0.5 - med_echo_distance * 0.5,
-                            // )
-                            .reverb(
-                                Duration::from_millis((max_echo_distance * 1250.0) as u64),
-                                0.25 - max_echo_distance * 0.25,
-                            )
-                            .convert_samples(),
-                    )
-                    .unwrap();
-
-                muzzle_flash = true;
-                self.player.gun_timer = 12;
-            }
-        } else {
-            self.player.gun_timer -= 1;
+        if mouse::button_pressed(ctx, mouse::MouseButton::Left) {
+            self.player.equipped_item.primary_use();    
         }
-
+        
         if keyboard::is_key_pressed(ctx, KeyCode::Left) {
             self.player.facing.x += 0.025;
         }
@@ -562,9 +588,7 @@ impl EventHandler<ggez::GameError> for Katakomb {
         }
 
         if mouse::button_pressed(ctx, mouse::MouseButton::Right) {
-            self.player.ads *= 0.9; //(self.player.ads - 0.1).max(0.0);
-        } else {
-            self.player.ads = (self.player.ads + 0.1).min(1.0);
+            self.player.equipped_item.secondary_use();
         }
 
         if keyboard::is_key_pressed(ctx, KeyCode::A) {
@@ -871,21 +895,11 @@ impl EventHandler<ggez::GameError> for Katakomb {
         }
         ggez::graphics::draw(ctx, &sprite_batch, DrawParam::default())?;
 
-        let mut weapon_sprite_batch = SpriteBatch::new(self.font.texture().clone());
+        let mut item_sprite_batch = SpriteBatch::new(self.font.texture().clone());
 
-        rendering::util::draw_player_weapon(
-            &mut weapon_sprite_batch,
-            &self.font,
-            model_view_projection,
-            self.player.pos,
-            rotation,
-            &self.player.gun_model,
-            self.player.ads,
-            self.player.gun_recoil,
-            self.player.gun_rotation,
-        );
+        self.player.draw_equipped(&self.font, model_view_projection, rotation, &mut item_sprite_batch);
 
-        ggez::graphics::draw(ctx, &weapon_sprite_batch, DrawParam::default())?;
+        ggez::graphics::draw(ctx, &item_sprite_batch, DrawParam::default())?;
 
         graphics::present(ctx)
     }

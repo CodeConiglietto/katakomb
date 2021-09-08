@@ -1,4 +1,3 @@
-use ggez::nalgebra as na;
 use na::*;
 use ndarray::prelude::*;
 
@@ -12,7 +11,7 @@ pub fn world_pos_to_index(pos: Point3<f32>) -> Point3<usize> {
     )
 }
 
-pub fn world_pos_to_int(pos: Point3<f32>) -> Point3<i32> {
+pub fn _world_pos_to_int(pos: Point3<f32>) -> Point3<i32> {
     Point3::new(
         pos.x.floor() as i32,
         pos.y.floor() as i32,
@@ -46,7 +45,7 @@ where
 }
 
 //Tries to fire a bresenham hitscan, returns dest if no collisions
-pub fn try_bresenham_hitscan(
+pub fn _try_bresenham_hitscan(
     tile_array: ArrayView3<Tile>,
     src: Point3<i32>,
     dest: Point3<i32>,
@@ -87,7 +86,7 @@ pub fn try_bresenham_hitscan(
 
 //Tries to fire a floating point hitscan, returns dest if no collisions
 //This assumes that whatever is being scanned against is in an evenly spaced grid of tile size 1*1*1
-pub fn try_ray_hitscan(
+pub fn _try_ray_hitscan(
     tile_array: ArrayView3<Tile>,
     src: Point3<f32>,
     dest: Point3<f32>,
@@ -132,7 +131,7 @@ pub fn try_ray_hitscan(
     return dest;
 }
 
-pub fn hitscan_tile(
+pub fn _hitscan_tile(
     tile_array: ArrayView3<Tile>,
     src: Point3<f32>,
     dest: Point3<f32>,
@@ -140,7 +139,7 @@ pub fn hitscan_tile(
     let mut hits = Vec::new();
 
     for target in get_cube_points(dest) {
-        let hit = try_ray_hitscan(tile_array, src, target);
+        let hit = _try_ray_hitscan(tile_array, src, target);
 
         if world_pos_to_index(hit) != world_pos_to_index(target) {
             hits.push(hit);
@@ -150,11 +149,7 @@ pub fn hitscan_tile(
     hits
 }
 
-// fn get_tile_from_point(tile_array: ArrayView3<Tile>, pos: Point3::<f32>) -> Tile{
-
-// }
-
-pub fn get_light_hitscans(
+pub fn _get_light_hitscans(
     light: &Light,
     lighting_sphere: &Vec<Point3<f32>>,
     tile_array: ArrayView3<Tile>,
@@ -177,7 +172,7 @@ pub fn get_light_hitscans(
             target_point.z + light.pos.z + light_target.z,
         );
 
-        ray_hits.append(&mut hitscan_tile(
+        ray_hits.append(&mut _hitscan_tile(
             tile_array,
             light.pos,
             target_point_offset,
@@ -185,4 +180,10 @@ pub fn get_light_hitscans(
     }
 
     ray_hits
+}
+
+pub fn get_tile_at(pos: Point3<f32>, tile_array: &Array3<Tile>) -> Tile {
+    let index = world_pos_to_index(pos);
+
+    tile_array[[index.x, index.y, index.z]].clone()
 }

@@ -1,4 +1,3 @@
-use ggez::nalgebra as na;
 use na::*;
 use std::convert::TryInto;
 

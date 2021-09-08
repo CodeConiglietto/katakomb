@@ -1,4 +1,3 @@
-use ggez::nalgebra as na;
 use na::*;
 
 use crate::rendering::{drawable::*, font::*};
@@ -37,7 +36,12 @@ impl TileType {
     pub fn collides(&self) -> bool {
         match self {
             TileType::Air => false,
-            _ => true,
+            TileType::Rock0 | TileType::Rock1 | TileType::Rock2 | TileType::Rock3 | TileType::Rock4 | TileType::Rock5 | TileType::Rock6 | TileType::Rock7 => true,
+            TileType::Mushroom => false,
+            TileType::Candle => false,
+            TileType::StockUpper => false,
+            TileType::Stock => false,
+            _ => todo!(),
         }
     }
 }

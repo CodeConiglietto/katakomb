@@ -1,6 +1,6 @@
 use specs::prelude::*;
 use specs_derive::Component;
-use ggez::nalgebra::Vector3;
+use na::Vector3;
 
 #[derive(Component, Debug)]
 pub struct VelocityComponent

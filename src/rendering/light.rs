@@ -1,4 +1,3 @@
-use ggez::nalgebra as na;
 use na::*;
 
 #[derive(Clone)]

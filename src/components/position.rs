@@ -1,6 +1,6 @@
 use specs::prelude::*;
 use specs_derive::Component;
-use ggez::nalgebra::Point3;
+use na::Point3;
 
 #[derive(Component, Debug)]
 pub struct PositionComponent
