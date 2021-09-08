@@ -139,27 +139,29 @@ impl KataFontBatch {
             mint::Vector2::from([mirror_scale.x * self.scaling, mirror_scale.y * self.scaling]);
         let offset = mint::Point2::from([0.0, 0.0]);
 
-        self.fg_batch.add(DrawParam {
-            src: self.font.get_src_rect(voxel.char_offset),
-            dest,
-            rotation: voxel.rotation.into_rotation(),
-            scale,
-            offset,
-            color: voxel.foreground.into(),
-        });
+        self.fg_batch.add(
+            DrawParam::new()
+                .src(self.font.get_src_rect(voxel.char_offset))
+                .dest(dest)
+                .rotation(voxel.rotation.into_rotation())
+                .scale(scale)
+                .offset(offset)
+                .color(voxel.foreground.into()),
+        );
 
         if let Some(background) = voxel.background {
-            self.bg_batch.add(DrawParam {
-                src: Rect::new(0.0, 0.0, 1.0, 1.0),
-                dest,
-                rotation: voxel.rotation.into_rotation(),
-                scale: mint::Vector2::from([
-                    scale.x * self.font.char_width() as f32,
-                    scale.y * self.font.char_height() as f32,
-                ]),
-                offset,
-                color: background.into(),
-            });
+            self.bg_batch.add(
+                DrawParam::new()
+                    .src(Rect::new(0.0, 0.0, 1.0, 1.0))
+                    .dest(dest)
+                    .rotation(voxel.rotation.into_rotation())
+                    .scale(mint::Vector2::from([
+                        scale.x * self.font.char_width() as f32,
+                        scale.y * self.font.char_height() as f32,
+                    ]))
+                    .offset(offset)
+                    .color(background.into()),
+            );
         }
     }
 

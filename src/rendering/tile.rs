@@ -33,6 +33,15 @@ pub enum TileType {
     Grip,
 }
 
+impl TileType {
+    pub fn collides(&self) -> bool {
+        match self {
+            TileType::Air => false,
+            _ => true,
+        }
+    }
+}
+
 impl Drawable for TileType {
     fn get_char_offset(&self, font: &KataFont) -> Rect {
         match self {
@@ -115,6 +124,14 @@ impl Drawable for TileType {
 #[derive(Debug, Clone)]
 pub struct Tile {
     pub pos: Point3<f32>,
-    pub illumination: f32,
+    pub illumination_color: Color,
     pub tile_type: TileType,
+}
+
+impl Tile {
+    pub fn illuminated(&self) -> bool {
+        self.illumination_color.r > 0.0
+            || self.illumination_color.g > 0.0
+            || self.illumination_color.b > 0.0
+    }
 }

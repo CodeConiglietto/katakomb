@@ -1,5 +1,6 @@
 use ggez::nalgebra as na;
 use na::*;
+use std::convert::TryInto;
 
 use crate::util::*;
 
@@ -78,14 +79,16 @@ pub fn calculate_bresenham(p1: Point3<i32>, p2: Point3<i32>) -> Vec<Point3<i32>>
     line
 }
 
-pub fn calculate_sphere_surface(radius: i32) -> Vec<Point3<f32>> {
+pub fn calculate_sphere_surface(radius: usize) -> Vec<Point3<f32>> {
     let mut points = Vec::new();
 
     let origin = Point3::origin();
 
-    for x in -radius..=radius {
-        for y in -radius..=radius {
-            for z in -radius..=radius {
+    let radius: i32 = radius.try_into().unwrap();
+
+    for x in -radius..radius {
+        for y in -radius..radius {
+            for z in -radius..radius {
                 let point = Point3::new(x as f32, y as f32, z as f32);
 
                 //DISGOSDANG

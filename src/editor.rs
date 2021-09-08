@@ -54,7 +54,7 @@ impl Editor {
             mode: EditorMode::restore(&recent, &voxels, &models, &font),
             ui_context: UiContext::new(KataFontBatch::new(
                 font,
-                Image::solid(ctx, 1, graphics::WHITE)?,
+                Image::solid(ctx, 1, graphics::Color::WHITE)?,
                 4.0,
             )),
 
@@ -81,7 +81,7 @@ impl Editor {
     }
 }
 
-impl EventHandler for Editor {
+impl EventHandler<ggez::GameError> for Editor {
     fn mouse_wheel_event(&mut self, ctx: &mut Context, _x: f32, y: f32) {
         self.mouse_wheel_scroll += y;
 
@@ -197,7 +197,7 @@ impl EventHandler for Editor {
     }
 
     fn draw(&mut self, ctx: &mut Context) -> GameResult<()> {
-        graphics::clear(ctx, graphics::BLACK);
+        graphics::clear(ctx, graphics::Color::BLACK);
 
         self.ui_context.batch.clear();
 
