@@ -129,10 +129,14 @@ fn main() -> Fallible<()> {
     }
 }
 
-struct Player {
+struct Entity {
     pos: Point3<f32>,
     vel: Vector3<f32>,
     facing: Point2<f32>,
+}
+
+struct Player {
+    entity: Entity,
 
     crouching: bool,
 
@@ -150,22 +154,54 @@ impl Player {
         match &self.equipped_item {
             Item::Weapon {
                 gun_model,
-                gun_timer,
                 ads,
                 gun_recoil,
                 gun_rotation,
+                ..
             } => {
                 rendering::util::draw_player_weapon(
                     &mut item_sprite_batch,
                     &font,
                     mvp,
-                    self.pos,
+                    self.entity.pos,
                     rotation,
                     &gun_model,
                     *ads,
                     *gun_recoil,
                     *gun_rotation,
                 );
+            }
+            Item::Glowstick {
+                cracked,
+                light_timer,
+            } => {
+                let tile_type = TileType::Glowstick;
+                let color = tile_type.get_color();
+                let color_darkness = if *cracked {
+                    *light_timer as f32 / GLOWSTICK_TIMER as f32
+                } else {
+                    0.25
+                };
+
+                let screen_dest = [
+                    WINDOW_WIDTH / 2.0,
+                    WINDOW_HEIGHT,
+                ];
+
+                let dp = DrawParam::new()
+                    .src(tile_type.get_char_offset(&font))
+                    .dest(screen_dest)
+                    .scale([31.4, 31.4])
+                    .color(Color {
+                        r: color.r * color_darkness,
+                        g: color.g * color_darkness,
+                        b: color.b * color_darkness,
+                        a: 1.0,
+                    })
+                    .rotation(tile_type.rotation())
+                    .offset([0.5, 0.5]);
+
+                item_sprite_batch.add(dp);
             }
         }
     }
@@ -178,14 +214,18 @@ impl Player {
                 let gun_rotation =
                     Rotation3::from_euler_angles(-gun_rotation.y, gun_rotation.x, 0.0);
 
-                let view_rotation = Rotation3::from_euler_angles(self.facing.y, self.facing.x, 0.0);
+                let view_rotation =
+                    Rotation3::from_euler_angles(self.entity.facing.y, self.entity.facing.x, 0.0);
 
                 let gun_facing = view_rotation
                     .transform_point(&gun_rotation.transform_point(&Point3::new(0.0, 0.0, 1.0)));
             }
+            _ => {}
         }
     }
 }
+
+const GLOWSTICK_TIMER: usize = 10000;
 
 enum Item {
     Weapon {
@@ -196,10 +236,14 @@ enum Item {
         gun_recoil: f32,
         gun_rotation: Point2<f32>,
     },
+    Glowstick {
+        cracked: bool,
+        light_timer: usize,
+    },
 }
 
 impl Item {
-    pub fn update(&mut self) {
+    pub fn update(&mut self, pos: Point3<usize>, lights: &mut Vec<(Point3<usize>, Color)>) {
         match self {
             Self::Weapon {
                 ref mut gun_timer,
@@ -211,23 +255,41 @@ impl Item {
                 *gun_recoil *= 0.95;
                 gun_rotation.x *= 0.95;
                 gun_rotation.y *= 0.95;
-                *gun_timer -= 1;
+                if *gun_timer > 0 {
+                    *gun_timer -= 1;
+                }
                 *ads *= 0.9; //(self.player.ads - 0.1).max(0.0);
+            }
+            Self::Glowstick {
+                cracked,
+                ref mut light_timer,
+            } => {
+                if *cracked {
+                    lights.push((
+                        pos,
+                        scale_color(Color::GREEN, *light_timer as f32 / GLOWSTICK_TIMER as f32),
+                    ));
+                    if *light_timer > 0 {
+                        *light_timer -= 1;
+                    }
+                }
             }
         }
     }
-
-    pub fn primary_use(&mut self) {
+    
+    pub fn primary_use(&mut self, pos: Point3<usize>, lights: &mut Vec<(Point3<usize>, Color)>) {
         println!("primary item use");
         match self {
             Self::Weapon {
-                mut gun_timer,
-                mut gun_recoil,
-                mut gun_rotation,
+                ref mut gun_timer,
+                ref mut gun_recoil,
+                ref mut gun_rotation,
                 ..
             } => {
-                if gun_timer == 0 {
-                    gun_recoil = (gun_recoil + 0.2).min(1.0);
+                println!("gun timer: {}", *gun_timer);
+                if *gun_timer == 0 {
+                    lights.push((pos, Color::YELLOW));
+                    *gun_recoil = (*gun_recoil + 0.2).min(1.0);
                     gun_rotation.x = (gun_rotation.x + (thread_rng().gen::<f32>() - 0.5) * 0.05)
                         .min(1.0)
                         .max(-1.0);
@@ -298,17 +360,27 @@ impl Item {
                     //     )
                     //     .unwrap();
 
-                    gun_timer = 12;
+                    *gun_timer = 12;
                 }
+            }
+            Self::Glowstick { .. } => {
+                //TODO: throw
             }
         }
     }
 
-    pub fn secondary_use(&mut self) {
+    pub fn secondary_use(&mut self, pos: Point3<usize>, lights: &mut Vec<(Point3<usize>, Color)>) {
         println!("secondary item use");
         match self {
             Self::Weapon { ref mut ads, .. } => {
                 *ads = (*ads + 0.1).min(1.0);
+            }
+            Self::Glowstick {
+                ref mut cracked, ..
+            } => {
+                if !*cracked {
+                    *cracked = true;
+                }
             }
         }
     }
@@ -408,31 +480,38 @@ impl Katakomb {
             tile_array,
             draw_tiles: BTreeSet::new(),
             player: Player {
-                pos: Point3::new(
-                    (CHUNK_SIZE / 2) as f32,
-                    (CHUNK_SIZE / 2) as f32,
-                    (CHUNK_SIZE / 2) as f32,
-                ),
-                vel: Vector3::new(0.0, 0.0, 0.0),
-                facing: Point2::origin(),
-                equipped_item: Item::Weapon {
-                    gun_recoil: 0.0,
-                    gun_rotation: Point2::origin(),
-                    gun_model: arr2(&[
-                        [
-                            Air, Air, FrontSight, Air, Air, Air, Air, RearSight, Air, Air, Air,
-                        ],
-                        [
-                            BarrelEnd, BarrelEnd, GasBlock, Barrel, Barrel, RecLower, RecLower,
-                            RecLower, Air, StockUpper, StockUpper,
-                        ],
-                        [
-                            Air, Air, Air, Air, Air, Air, Magazine, Grip, Stock, Stock, Stock,
-                        ],
-                    ]),
-                    gun_timer: 0,
-                    ads: 0.0,
+                entity: Entity{
+                    pos: Point3::new(
+                        (CHUNK_SIZE / 2) as f32,
+                        (CHUNK_SIZE / 2) as f32,
+                        (CHUNK_SIZE / 2) as f32,
+                    ),
+                    vel: Vector3::new(0.0, 0.0, 0.0),
+                    facing: Point2::origin(),
                 },
+                equipped_item:
+                Item::Glowstick {
+                    cracked: false,
+                    light_timer: GLOWSTICK_TIMER,
+                },
+                // Item::Weapon {
+                //     gun_recoil: 0.0,
+                //     gun_rotation: Point2::origin(),
+                //     gun_model: arr2(&[
+                //         [
+                //             Air, Air, FrontSight, Air, Air, Air, Air, RearSight, Air, Air, Air,
+                //         ],
+                //         [
+                //             BarrelEnd, BarrelEnd, GasBlock, Barrel, Barrel, RecLower, RecLower,
+                //             RecLower, Air, StockUpper, StockUpper,
+                //         ],
+                //         [
+                //             Air, Air, Air, Air, Air, Air, Magazine, Grip, Stock, Stock, Stock,
+                //         ],
+                //     ]),
+                //     gun_timer: 0,
+                //     ads: 0.0,
+                // },
                 crouching: false,
             },
             nuke_lighting: false,
@@ -474,21 +553,29 @@ impl EventHandler<ggez::GameError> for Katakomb {
 
         let mouse_delta = mouse::delta(&ctx);
 
-        self.player.facing =
-            self.player.facing + Vector2::new(mouse_delta.x * -0.0025, mouse_delta.y * 0.0025);
+        let mut light_sources = Vec::new();
+
+        self.player.entity.facing = self.player.entity.facing
+            + Vector2::new(mouse_delta.x * -0.0025, mouse_delta.y * 0.0025);
 
         let mut muzzle_flash = false;
 
         let update_time = timer::duration_to_f64(timer::time_since_start(ctx));
 
-        self.player.equipped_item.update();
+        self.player.equipped_item.update(
+            world_pos_to_index(self.player.entity.pos),
+            &mut light_sources,
+        );
         self.player.update_equipped();
 
         let movement_rotation =
-            Rotation3::from_axis_angle(&Vector3::y_axis(), self.player.facing.x);
+            Rotation3::from_axis_angle(&Vector3::y_axis(), self.player.entity.facing.x);
 
         if mouse::button_pressed(ctx, mouse::MouseButton::Left) {
-            self.player.equipped_item.primary_use();
+            self.player.equipped_item.primary_use(
+                world_pos_to_index(self.player.entity.pos),
+                &mut light_sources,
+            );
         }
 
         // if keyboard::is_key_pressed(ctx, KeyCode::Left) {
@@ -505,34 +592,37 @@ impl EventHandler<ggez::GameError> for Katakomb {
         // }
 
         if mouse::button_pressed(ctx, mouse::MouseButton::Right) {
-            self.player.equipped_item.secondary_use();
+            self.player.equipped_item.secondary_use(
+                world_pos_to_index(self.player.entity.pos),
+                &mut light_sources,
+            );
         }
 
         if keyboard::is_key_pressed(ctx, KeyCode::A) {
-            self.player.vel.x += 0.01;
+            self.player.entity.vel.x += 0.01;
         }
         if keyboard::is_key_pressed(ctx, KeyCode::D) {
-            self.player.vel.x -= 0.01;
+            self.player.entity.vel.x -= 0.01;
         }
         if keyboard::is_key_pressed(ctx, KeyCode::W) {
-            self.player.vel.z += 0.01;
+            self.player.entity.vel.z += 0.01;
         }
         if keyboard::is_key_pressed(ctx, KeyCode::S) {
-            self.player.vel.z -= 0.01;
+            self.player.entity.vel.z -= 0.01;
         }
 
         if get_tile_at(
-            self.player.pos + Point3::new(0.0f32, -0.1f32, 0.0f32).coords,
+            self.player.entity.pos + Point3::new(0.0f32, -0.1f32, 0.0f32).coords,
             &self.tile_array,
         )
         .tile_type
         .collides()
         {
             if keyboard::is_key_pressed(ctx, KeyCode::Space) {
-                self.player.vel.y += 0.3;
+                self.player.entity.vel.y += 0.3;
             }
         } else {
-            self.player.vel.y -= 0.01;
+            self.player.entity.vel.y -= 0.01;
         }
         if keyboard::is_key_pressed(ctx, KeyCode::LControl) {
             self.player.crouching = true;
@@ -541,47 +631,47 @@ impl EventHandler<ggez::GameError> for Katakomb {
         }
 
         if get_tile_at(
-            self.player.pos + Point3::new(self.player.vel.x, 0.0f32, 0.0f32).coords,
+            self.player.entity.pos + Point3::new(self.player.entity.vel.x, 0.0f32, 0.0f32).coords,
             &self.tile_array,
         )
         .tile_type
         .collides()
         {
-            self.player.vel.x = 0.0;
+            self.player.entity.vel.x = 0.0;
         }
         if get_tile_at(
-            self.player.pos + Point3::new(0.0f32, self.player.vel.y, 0.0f32).coords,
+            self.player.entity.pos + Point3::new(0.0f32, self.player.entity.vel.y, 0.0f32).coords,
             &self.tile_array,
         )
         .tile_type
         .collides()
         {
-            self.player.vel.y = 0.0;
+            self.player.entity.vel.y = 0.0;
         }
         if get_tile_at(
-            self.player.pos + Point3::new(0.0f32, 0.0f32, self.player.vel.z).coords,
+            self.player.entity.pos + Point3::new(0.0f32, 0.0f32, self.player.entity.vel.z).coords,
             &self.tile_array,
         )
         .tile_type
         .collides()
         {
-            self.player.vel.z = 0.0;
+            self.player.entity.vel.z = 0.0;
         }
 
-        let vel_normalised = Unit::new_and_get(self.player.vel);
+        let vel_normalised = Unit::new_and_get(self.player.entity.vel);
         if vel_normalised.1 > 1.0 {
-            self.player.vel = vel_normalised.0.into_inner();
+            self.player.entity.vel = vel_normalised.0.into_inner();
         }
 
-        let movement_offset = movement_rotation.transform_vector(&self.player.vel);
+        let movement_offset = movement_rotation.transform_vector(&self.player.entity.vel);
 
-        let new_pos = self.player.pos + movement_offset;
+        let new_pos = self.player.entity.pos + movement_offset;
 
         if !get_tile_at(new_pos, &self.tile_array).tile_type.collides() {
-            self.player.pos = new_pos;
+            self.player.entity.pos = new_pos;
         }
 
-        self.player.vel *= 0.9;
+        self.player.entity.vel *= 0.9;
 
         if keyboard::is_key_pressed(ctx, KeyCode::N) {
             self.nuke_lighting = true;
@@ -590,7 +680,7 @@ impl EventHandler<ggez::GameError> for Katakomb {
         self.draw_tiles.clear();
 
         //let tile_points = self.tile_draw_points;
-        let camera_pos = self.player.pos;
+        let camera_pos = self.player.entity.pos;
 
         // let tile_array = &self.tile_array;
         // let zip_iter = ndarray::Zip::indexed(tile_array);
@@ -607,19 +697,10 @@ impl EventHandler<ggez::GameError> for Katakomb {
             camera_pos.z.floor() as usize,
         );
 
-        let mut light_sources = Vec::new();
-
-        light_sources.push((usize_camera_pos, Color::GREEN));
+        // light_sources.push((usize_camera_pos, Color::GREEN));
 
         if muzzle_flash {
-            light_sources.push((
-                Point3::new(
-                    camera_pos.x.floor() as usize,
-                    camera_pos.y.floor() as usize,
-                    camera_pos.z.floor() as usize,
-                ),
-                Color::YELLOW,
-            ));
+            light_sources.push((usize_camera_pos, Color::YELLOW));
         }
 
         // light_sources.extend(
@@ -639,7 +720,8 @@ impl EventHandler<ggez::GameError> for Katakomb {
 
         light_sources.extend(self.lights.iter().cloned());
 
-        //NEW SHITTY IMPLEMENTATION
+        //TODO: remove the necessity for this by having each light keep track of affected tiles
+        //and have light add/remove illumination as necessary
         self.tile_array
             .par_iter_mut()
             .for_each(|tile| tile.illumination_color = Color::BLACK);
@@ -652,7 +734,6 @@ impl EventHandler<ggez::GameError> for Katakomb {
                 let mut octs =
                     split_shadowcast_octants(self.tile_array.view_mut(), *light_pos, LIGHT_RANGE);
 
-                //TODO: clean up euclidean distance cleanup by storing a usize position in a tile instead of a f32 one
                 octs.iter_mut().for_each(|o| {
                     shadowcast_octant(
                         o.0.view_mut(),
@@ -673,7 +754,6 @@ impl EventHandler<ggez::GameError> for Katakomb {
                         },
                     )
                 });
-                // octs.iter_mut().for_each(|o| shadowcast_octant(o.0.view_mut(), o.1));
             }
         }
         self.draw_tiles.clear();
@@ -686,8 +766,11 @@ impl EventHandler<ggez::GameError> for Katakomb {
             PLAYER_SIGHT_RANGE,
         );
 
-        let player_rotation =
-            Rotation3::from_euler_angles(self.player.facing.y, self.player.facing.x, 0.0);
+        let player_rotation = Rotation3::from_euler_angles(
+            self.player.entity.facing.y,
+            self.player.entity.facing.x,
+            0.0,
+        );
 
         let fov_facing = Unit::new_normalize(
             player_rotation
@@ -701,10 +784,10 @@ impl EventHandler<ggez::GameError> for Katakomb {
                 o.1,
                 PLAYER_SIGHT_RANGE,
                 LightShape::Sphere,
-                //Cone {
+                // LightShape::Cone {
                 //    facing: fov_facing,
                 //    width_angle: FRAC_PI_4,
-                //},
+                // },
                 camera_pos,
                 |t, (x, y, z)| {
                     if !t.tile_type.is_transparent() && t.illuminated() {
@@ -717,12 +800,12 @@ impl EventHandler<ggez::GameError> for Katakomb {
             )
         });
 
+        let frame_time = Instant::now().duration_since(start_t).as_micros() as f64 / 1000.0;
+
         println!("Draw tiles len: {}", self.draw_tiles.len());
         println!("Light sources len: {}", light_sources.len());
-        println!(
-            "Frame time: {} ms",
-            Instant::now().duration_since(start_t).as_micros() as f64 / 1000.0
-        );
+        println!("Frame time: {} ms", frame_time);
+        println!("FPS: {}", 1000.0 / frame_time);
 
         // self.draw_tiles.sort_unstable_by(|a, b| {
         //     euclidean_distance_squared(b.pos, camera_pos)
@@ -750,17 +833,20 @@ impl EventHandler<ggez::GameError> for Katakomb {
 
         // Our camera looks toward the point (1.0, 0.0, 0.0).
         // It is located at (0.0, 0.0, 1.0).
-        let eye = self.player.pos + Point3::new(0.0, 1.0, 0.0).coords; //Point3::new(0.0, 0.0, 1.0);
+        let eye = self.player.entity.pos + Point3::new(0.0, 1.0, 0.0).coords; //Point3::new(0.0, 0.0, 1.0);
 
-        let rotation =
-            Rotation3::from_euler_angles(self.player.facing.y, self.player.facing.x, 0.0);
+        let rotation = Rotation3::from_euler_angles(
+            self.player.entity.facing.y,
+            self.player.entity.facing.x,
+            0.0,
+        );
 
         let rotation_offset = rotation.transform_point(&Point3::new(0.0, 0.0, 1.0));
 
         let target = Point3::new(
-            self.player.pos.x + rotation_offset.x,
-            self.player.pos.y + rotation_offset.y + 1.0,
-            self.player.pos.z + rotation_offset.z,
+            self.player.entity.pos.x + rotation_offset.x,
+            self.player.entity.pos.y + rotation_offset.y + 1.0,
+            self.player.entity.pos.z + rotation_offset.z,
         );
         // let target = Point3::new(0.0, 0.0, 0.0);
         let view = Isometry3::look_at_rh(&eye, &target, &Vector3::y());

@@ -1,7 +1,12 @@
 use na::*;
 use ndarray::prelude::*;
 
-use crate::{constants::*, geometry::util::*, rendering::{drawable::*, tile::*, light::Light}, util::*};
+use crate::{
+    constants::*,
+    geometry::util::*,
+    rendering::{drawable::*, light::Light, tile::*},
+    util::*,
+};
 
 pub fn world_pos_to_index(pos: Point3<f32>) -> Point3<usize> {
     Point3::new(

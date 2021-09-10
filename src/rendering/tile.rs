@@ -4,6 +4,7 @@ use crate::rendering::{drawable::*, font::*};
 
 use ggez::graphics::{Color, Rect};
 
+//Using this as a stopgap for storing voxel information until it's split into its own struct/enum/whatever
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub enum TileType {
     Air,
@@ -30,17 +31,26 @@ pub enum TileType {
     Stock,
     StockUpper,
     Grip,
+    Glowstick,
 }
 
 impl TileType {
     pub fn collides(&self) -> bool {
         match self {
             TileType::Air => false,
-            TileType::Rock0 | TileType::Rock1 | TileType::Rock2 | TileType::Rock3 | TileType::Rock4 | TileType::Rock5 | TileType::Rock6 | TileType::Rock7 => true,
+            TileType::Rock0
+            | TileType::Rock1
+            | TileType::Rock2
+            | TileType::Rock3
+            | TileType::Rock4
+            | TileType::Rock5
+            | TileType::Rock6
+            | TileType::Rock7 => true,
             TileType::Mushroom => false,
             TileType::Candle => false,
             TileType::StockUpper => false,
             TileType::Stock => false,
+            TileType::Glowstick => false,
             _ => todo!(),
         }
     }
@@ -73,23 +83,39 @@ impl Drawable for TileType {
             TileType::Stock => font.get_src_rect(0x319),
             TileType::StockUpper => font.get_src_rect(0x2DD),
             TileType::Grip => font.get_src_rect(0x283),
+            TileType::Glowstick => font.get_src_rect(0x2F),
         }
     }
     fn get_color(&self) -> Color {
         match self {
             TileType::Air => Color::new(0.0, 0.0, 0.0, 0.0),
-            TileType::Rock0 | TileType::Rock1 | TileType::Rock2 | TileType::Rock3 | TileType::Rock4 | TileType::Rock5 | TileType::Rock6 | TileType::Rock7 => Color::new(0.5, 0.5, 0.5, 1.0),
+            TileType::Rock0
+            | TileType::Rock1
+            | TileType::Rock2
+            | TileType::Rock3
+            | TileType::Rock4
+            | TileType::Rock5
+            | TileType::Rock6
+            | TileType::Rock7 => Color::new(0.5, 0.5, 0.5, 1.0),
             TileType::Mushroom => Color::new(0.75, 0.0, 0.75, 1.0),
             TileType::Candle => Color::new(0.9, 0.9, 0.0, 1.0),
             TileType::StockUpper => Color::new(0.75, 0.5, 0.25, 1.0),
             TileType::Stock => Color::new(0.75, 0.5, 0.25, 1.0),
+            TileType::Glowstick => Color::GREEN,
             _ => Color::new(0.25, 0.25, 0.25, 1.0),
         }
     }
     fn is_transparent(&self) -> bool {
         match self {
             TileType::Air => true,
-            TileType::Rock0 | TileType::Rock1 | TileType::Rock2 | TileType::Rock3 | TileType::Rock4 | TileType::Rock5 | TileType::Rock6 | TileType::Rock7 => false,
+            TileType::Rock0
+            | TileType::Rock1
+            | TileType::Rock2
+            | TileType::Rock3
+            | TileType::Rock4
+            | TileType::Rock5
+            | TileType::Rock6
+            | TileType::Rock7 => false,
             TileType::Mushroom => true,
             TileType::Candle => true,
             TileType::FrontSight => true,
@@ -105,12 +131,14 @@ impl Drawable for TileType {
             TileType::Stock => true,
             TileType::StockUpper => true,
             TileType::Grip => true,
+            TileType::Glowstick => true,
         }
     }
     fn illuminates(&self) -> bool {
         match self {
             TileType::Mushroom => true,
             TileType::Candle => true,
+            TileType::Glowstick => true,
             _ => false,
         }
     }

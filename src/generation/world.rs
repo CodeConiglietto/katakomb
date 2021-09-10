@@ -116,8 +116,7 @@ pub fn gen_tile(gen_package: &ChunkGenPackage, x: usize, y: usize, z: usize) -> 
             let dist_weights = [1, 2, 4, 8, 8, 4, 2, 1];
             let dist = rand::distributions::weighted::WeightedIndex::new(&dist_weights).unwrap();
 
-            match dist.sample(& mut thread_rng())
-            {
+            match dist.sample(&mut thread_rng()) {
                 0 => TileType::Rock0,
                 1 => TileType::Rock1,
                 2 => TileType::Rock2,
